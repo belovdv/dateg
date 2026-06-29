@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+
+members = ["crates/*"]
+
+[workspace.dependencies]
+
+[profile.work]
+inherits = "dev"
+opt-level = 2
+
+[profile.optimize]
+inherits = "release"
+lto = "thin"
