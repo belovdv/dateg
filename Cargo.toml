@@ -4,6 +4,12 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.dependencies]
+indexmap = "2.14.0"
+anyhow = "1.0.103"
+log = "0.4.33"
+env_logger = "0.11.11"
+ahash = "0.8.12"
+paste = "1.0.15"
 
 [profile.work]
 inherits = "dev"

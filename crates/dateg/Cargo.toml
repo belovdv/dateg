@@ -1,0 +1,11 @@
+[package]
+name = "dateg"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+egglog-bridge = { git = "https://github.com/egraphs-good/egglog.git", rev = "7e926c6e2842db66c3f40e5cb6139a6406a9d05a" }
+egglog-core-relations = { git = "https://github.com/egraphs-good/egglog.git", rev = "7e926c6e2842db66c3f40e5cb6139a6406a9d05a" }
+indexmap.workspace = true
+ahash.workspace = true
+paste.workspace = true
