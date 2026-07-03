@@ -1,9 +1,12 @@
 mod macros;
+mod rule_builder;
+mod rule_run;
 mod schema;
 mod table;
 mod token;
 mod tuple;
 
+pub use rule_builder::*;
 pub use schema::*;
 pub use table::*;
 pub use token::*;
