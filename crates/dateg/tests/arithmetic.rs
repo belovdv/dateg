@@ -22,7 +22,7 @@ fn add_and_get_values() {
         (table_add = constructor Add (TokenExpr TokenExpr) TokenExpr)
         (table_mul = constructor Mul (TokenExpr TokenExpr) TokenExpr)
         (table_const = constructor Const (TokenUsize) TokenExpr)
-        (table_var = constructor Const (TokenString) TokenExpr)
+        (table_var = constructor Var (TokenString) TokenExpr)
         (universe = function Universe (TokenString) TokenExpr)
 
         (c1 = (table_const v1))
@@ -43,23 +43,23 @@ fn add_and_get_values() {
         // (e_mul = (table_mul va c1 vb))
     }
 
-    let e_sq_sum_a_b_ = eg.add_value(table_mul, (e_add_a_b, e_add_a_b));
+    let e_sq_sum_a_b_ = eg.row_add(table_mul, (e_add_a_b, e_add_a_b));
     assert!(e_sq_sum_a_b == e_sq_sum_a_b_.canon(&eg));
 
     let mut rows: AHashSet<_> = [
-        (va, vb, e_add_a_b),
-        (vb, c1, e_add_b_1),
-        (va, e_add_b_1, e_add_a_add_b_1),
+        ((va, vb), e_add_a_b),
+        ((vb, c1), e_add_b_1),
+        ((va, e_add_b_1), e_add_a_add_b_1),
     ]
     .into_iter()
     .collect();
-    eg.for_each_row(table_add, |row| {
-        assert!(rows.remove(&row));
+    eg.for_each_row(table_add, |inputs, output| {
+        assert!(rows.remove(&(inputs, output)));
     });
     assert!(rows.is_empty());
 
     let mut values: AHashSet<_> = [1, 5].into_iter().collect();
-    eg.for_each_row(table_const, |(val, _)| {
+    eg.for_each_row(table_const, |(val,), _| {
         let val = val.get(&eg);
         assert!(values.remove(&val));
     });
