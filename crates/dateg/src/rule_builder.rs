@@ -113,9 +113,14 @@ impl<'a> RuleBuilder<'a> {
         self.inner.set(table.egglog(), &entries);
     }
     /// Union two ids
-    pub fn union<T: TokenValueOpaqueMarker>(&mut self, a: Var<T>, b: Var<T>) {
-        self.inner
-            .union(self.vars[a.0].clone(), self.vars[b.0].clone());
+    pub fn union<T: TokenValueOpaqueMarker>(
+        &mut self,
+        a: impl Into<Entry<T>>,
+        b: impl Into<Entry<T>>,
+    ) {
+        let a = a.into().into_entry(self);
+        let b = b.into().into_entry(self);
+        self.inner.union(a, b);
     }
 
     pub fn build(self) -> RuleId {

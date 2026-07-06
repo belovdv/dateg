@@ -112,10 +112,41 @@ fn rule_builder() {
         )
     }
 
-    eg.run_single_rule(&[r2]);
+    eg.run_rules(&[r2]);
     assert!(ab_cb.canon(&eg) != ac.canon(&eg));
-    eg.run_single_rule(&[r1]);
+    eg.run_rules(&[r1]);
     assert!(ab_cb.canon(&eg) != ac.canon(&eg));
-    eg.run_single_rule(&[r2]);
+    eg.run_rules(&[r2]);
     assert!(ab_cb.canon(&eg) == ac.canon(&eg));
+}
+
+#[test]
+fn rule_builder_external_value() {
+    let mut eg = EGraph::default();
+
+    eg.add_primitive_type::<String>();
+    eg.add_primitive_type::<usize>();
+
+    let v0 = eg.add_primitive_value(0usize);
+    let sa = eg.add_primitive_value("a".to_string());
+
+    execute! {eg;
+        (constructor table_sub (TokenExpr TokenExpr) TokenExpr)
+        (constructor table_const (TokenUsize) TokenExpr)
+        (constructor table_var (TokenString) TokenExpr)
+
+        (= c0 (table_const v0))
+        (= va (table_var sa))
+        (= vaa (table_sub va va))
+
+        // x - x -> 0
+        (rule r0 { x r }
+            (query r (table_sub x x))
+            (uni r c0)
+        )
+
+        (run_rules r0)
+    }
+
+    assert!(vaa.canon(&eg) == c0.canon(&eg));
 }

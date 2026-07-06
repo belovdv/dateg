@@ -21,6 +21,9 @@ macro_rules! execute {
     (@ $eg:expr; rule $rule:ident $($body:tt)*) => {
         let $rule = $crate::rule!{$eg; $($body)* };
     };
+    (@ $eg:expr; run_rules $($rule:ident)*) => {
+        $eg.run_rules(&[$($rule),*]);
+    };
     (@@ =) => {};
     (@@ $action:ident) => {
         #[cfg(false)] struct $action {} // syntax highlighting hack
@@ -75,6 +78,6 @@ macro_rules! rule {
     (@uni $rb:ident $a:tt $b:tt) => {
         let a = $crate::rule!(@add_arg $rb $a);
         let b = $crate::rule!(@add_arg $rb $b);
-        $rb.union($a, $b);
+        $rb.union(a, b);
     };
 }
