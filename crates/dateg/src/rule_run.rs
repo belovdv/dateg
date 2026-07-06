@@ -3,7 +3,7 @@ use egglog_bridge::RuleId;
 use crate::*;
 
 impl EGraph {
-    pub fn run_single_rule(&mut self, rule: RuleId) {
-        self.inner.run_rules(&[rule]).unwrap();
+    pub fn run_single_rule(&mut self, rules: &[RuleId]) {
+        self.inner.run_rules(rules).unwrap();
     }
 }

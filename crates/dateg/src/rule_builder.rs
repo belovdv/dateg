@@ -55,6 +55,10 @@ impl<'a> RuleBuilder<'a> {
         self.vars.push(var);
         Var(id, PhantomData)
     }
+    pub fn var<T: Token>(&mut self) -> Var<T> {
+        let var = self.inner.new_var(T::egglog(self.inner.egraph()));
+        self._add_var(QueryEntry::Var(var))
+    }
     pub fn var_named<T: Token>(&mut self, name: &str) -> Var<T> {
         let var = self
             .inner
