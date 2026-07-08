@@ -20,8 +20,22 @@ impl<S: Schema> Table<S> {
 }
 
 impl EGraph {
+    /// If name already exists - returns handle to corresponding table.
+    ///
+    /// Panics if schema of that table doesn't match requested one.
     pub fn add_table<S: Schema>(&mut self, name: impl ToString) -> Table<S> {
-        let id = self.inner.add_table(S::egglog(&self.inner, name));
+        let name = name.to_string();
+        let id = match self.tables.entry(name.clone()) {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                assert_eq!(entry.get().0, TypeId::of::<S>());
+                entry.get().1
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let id = self.inner.add_table(S::egglog(&self.inner, name));
+                entry.insert((TypeId::of::<S>(), id));
+                id
+            }
+        };
         Table(id, PhantomData)
     }
     pub fn add_table_constructor<In: TokenTuple, Out: TokenValueOpaqueMarker>(
@@ -34,6 +48,12 @@ impl EGraph {
         &mut self,
         name: impl ToString,
     ) -> Table<TableFunctionSchema<In, Out>> {
+        self.add_table(name)
+    }
+    pub fn add_table_relation<Body: TokenTuple>(
+        &mut self,
+        name: impl ToString,
+    ) -> Table<TableRelationSchema<Body>> {
         self.add_table(name)
     }
 
@@ -63,6 +83,15 @@ impl EGraph {
         let mut loader = self.loader(table);
         loader.set(key, value);
         loader.flush();
+    }
+    pub fn row_get<TVO, S>(&self, table: Table<S>, key: S::Inputs) -> Option<S::Output>
+    where
+        TVO: Send + Sync + 'static,
+        S: Schema<Output = TokenValueOpaque<TVO>>,
+    {
+        self.inner
+            .lookup_id(table.0, &key.into_values())
+            .map(TokenValueOpaque::from_value)
     }
     pub fn row_add<S: Schema<DefaultVal = DefaultValFreshId>>(
         &mut self,

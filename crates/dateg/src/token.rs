@@ -1,9 +1,10 @@
-//! Token - reference to value in database
+//! Token - typed reference to value in database
 
 use std::{hash::Hash, marker::PhantomData};
 
 use egglog_bridge::ColumnTy;
 use egglog_core_relations::{BaseValue, Value};
+use egglog_numeric_id::NumericId;
 
 use crate::EGraph;
 
@@ -36,6 +37,11 @@ impl<T> Hash for TokenValueOpaque<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
         self.1.hash(state);
+    }
+}
+impl<T> std::fmt::Debug for TokenValueOpaque<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("Token({})", self.as_usize()))
     }
 }
 
@@ -76,6 +82,13 @@ impl<T: Send + Sync + 'static> Token for TokenValueOpaque<T> {
         Self::from_value(eg.inner.get_canon_repr(self.0, ColumnTy::Id))
     }
 }
+impl<T> TokenValueOpaque<T> {
+    pub fn as_usize(&self) -> usize {
+        self.0.index()
+    }
+}
 
 pub trait TokenValueOpaqueMarker: Token {}
 impl<T: Send + Sync + 'static> TokenValueOpaqueMarker for TokenValueOpaque<T> {}
+pub trait TokenValuePrimitiveMarker: Token {}
+impl<T: BaseValue> TokenValuePrimitiveMarker for TokenValuePrimitive<T> {}

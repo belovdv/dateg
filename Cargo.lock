@@ -233,6 +233,7 @@ dependencies = [
  "ahash",
  "egglog-bridge",
  "egglog-core-relations",
+ "egglog-numeric-id",
  "indexmap",
  "paste",
 ]

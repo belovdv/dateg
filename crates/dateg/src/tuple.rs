@@ -13,7 +13,7 @@ pub trait TypeMapper {
     type Output<T>;
 }
 
-pub trait TokenTuple: Tuple {
+pub trait TokenTuple: Tuple + Copy + 'static {
     fn egglog(eg: &egglog_bridge::EGraph) -> Vec<ColumnTy>;
     fn into_values(self) -> Vec<Value>;
     fn from_values(values: &[Value]) -> Self;
@@ -77,3 +77,30 @@ macro_rules! impl_tt {
 }
 impl_tt!(A B C D E F G H I J K L M N O P);
 pub struct IntoTuple<T>(pub T);
+
+impl Tuple for () {
+    const LEN: usize = 0;
+    type Array<T> = [T; 0];
+    type TypeMapped<M: TypeMapper> = ();
+}
+impl TokenTuple for () {
+    fn egglog(_: &egglog_bridge::EGraph) -> Vec<ColumnTy> {
+        vec![]
+    }
+    fn into_values(self) -> Vec<Value> {
+        vec![]
+    }
+    fn from_values(_: &[Value]) -> Self {
+        ()
+    }
+}
+impl EntryTuple for () {
+    fn into_entries(self, _: &mut RuleBuilder) -> Vec<QueryEntry> {
+        vec![]
+    }
+}
+impl Into<()> for IntoTuple<()> {
+    fn into(self) -> () {
+        ()
+    }
+}

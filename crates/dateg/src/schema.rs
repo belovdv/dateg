@@ -33,8 +33,13 @@ impl DefaultValT for DefaultValConst0 {
         egglog_bridge::DefaultVal::Const(Value::new_const(0))
     }
 }
+pub fn token_unit() -> TokenValuePrimitive<()> {
+    use std::sync::OnceLock;
+    static TOKEN_UNIT: OnceLock<TokenValuePrimitive<()>> = OnceLock::new();
+    *TOKEN_UNIT.get_or_init(|| TokenValuePrimitive::from_value(Value::new_const(0)))
+}
 
-pub trait Schema {
+pub trait Schema: 'static {
     type Inputs: TokenTuple;
     type Output: Token;
 
