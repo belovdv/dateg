@@ -25,7 +25,7 @@ pub use dateg_macro::rule;
 pub struct EGraph {
     inner: egglog_bridge::EGraph,
     tables: AHashMap<String, (TypeId, egglog_bridge::FunctionId)>,
-    ruleset_active: String,
+    pub ruleset_active: String,
     pub rulesets: AHashMap<String, Vec<RuleId>>,
 }
 

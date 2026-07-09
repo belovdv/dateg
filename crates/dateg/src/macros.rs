@@ -6,6 +6,8 @@ macro_rules! execute {
         $( $crate::execute!(@@ $action); )*
         $( $crate::execute!(@ $eg; $action $($prog)*); )*
     };
+
+    // Table
     (@$eg:expr; constructor $table:ident ($($Args:ident)*) $Ret:ident) => {
         #[cfg(false)] fn $table() {} // syntax highlighting hack
         let $table = $eg.add_table_constructor::<($($Args,)*), $Ret>(stringify!($table));
@@ -18,13 +20,33 @@ macro_rules! execute {
         #[cfg(false)] fn $table() {} // syntax highlighting hack
         let $table = $eg.add_table_relation::<($($Args,)*)>(stringify!($table));
     };
-    (@$eg:expr; rule $rule:ident $($body:tt)*) => {
-        let $rule = $crate::rule!{$eg; $($body)* };
+
+    // Ruleset
+    (@$eg:expr; set_ruleset_active $name:literal) => {
+        $eg.ruleset_active = $name.to_string();
     };
-    (@$eg:expr; run_rules $($rule:ident)*) => {
-        $eg.run_rules(&[$($rule),*]);
+    (@$eg:expr; run_ruleset_active) => {
+        $eg.run_ruleset_active();
+    };
+    (@$eg:expr; run_ruleset $name:literal) => {
+        $eg.run_ruleset($name);
+    };
+    // Rule
+    (@$eg:expr; rule $($body:tt)*) => {
+        $crate::rule!{$eg; $($body)* };
+    };
+    (@$eg:expr; rewrite ($($lhs:tt)*) ($($rhs:tt)*)) => {
+        $crate::rule!{$eg; (query __r ($($lhs)*)) (set __r ($($rhs)*)) };
+    };
+    (@$eg:expr; rewrite ($($lhs:tt)*) $rhs:tt) => {
+        $crate::rule!{$eg; (query __r ($($lhs)*)) (uni __r $rhs) };
+    };
+    (@$eg:expr; birewrite ($($lhs:tt)*) ($($rhs:tt)*)) => {
+        $crate::rule!{$eg; (query __r ($($lhs)*)) (set __r ($($rhs)*)) };
+        $crate::rule!{$eg; (query __r ($($rhs)*)) (set __r ($($lhs)*)) };
     };
 
+    // Constants
     (@$eg:expr; = $value:tt ($table_token:ident $($args:ident)*)) => {
         #[cfg(false)] fn $table_token() {} // syntax highlighting hack
         let $value = $eg.row_add($table_token, ($($args,)*));

@@ -1,5 +1,5 @@
 use ahash::AHashSet;
-use dateg::{EGraph, Token, TokenValueOpaque, TokenValuePrimitive, execute};
+use dateg::{EGraph, Token, TokenValueOpaque, TokenValuePrimitive, execute, rule};
 
 struct Expr;
 type TokenExpr = TokenValueOpaque<Expr>;
@@ -40,7 +40,7 @@ fn add_and_get_values() {
         (= e_sq_sum_a_b (table_mul e_add_a_b e_add_a_b))
 
         // Error: expected (..., ...), found (..., ..., ...)
-        // (e_mul = (table_mul va c1 vb))
+        // (= e_mul (table_mul va c1 vb))
     }
 
     let e_sq_sum_a_b_ = eg.row_add(table_mul, (e_add_a_b, e_add_a_b));
@@ -92,25 +92,17 @@ fn rule_builder() {
     }
     assert!(ab_cb.canon(&eg) != ac.canon(&eg));
 
-    execute! {eg;
-        // (x + y) + z -> x + (y + z)
-        (rule r1
-            (query r (table_add (table_add x y) z))
-            (set r (table_add x (table_add y z)))
-        )
+    // (x + y) + z -> x + (y + z)
+    let r1 = rule!(eg;
+        (query r (table_add (table_add x y) z))
+        (set r (table_add x (table_add y z)))
+    );
 
-        // x + (y - x) -> y
-        (rule r2
-            (query r (table_add x (table_sub y x)))
-            (uni r y)
-        )
-
-        // check nested `add`
-        (rule _syntax
-            (query r (table_add x y))
-            (add _xy2 (table_add (table_add x y) (table_add x y)))
-        )
-    }
+    // x + (y - x) -> y
+    let r2 = rule!(eg;
+        (query r (table_add x (table_sub y x)))
+        (uni r y)
+    );
 
     eg.run_rules(&[r2]);
     assert!(ab_cb.canon(&eg) != ac.canon(&eg));
@@ -140,13 +132,56 @@ fn rule_builder_external_value() {
         (= vaa (table_sub va va))
 
         // x - x -> 0
-        (rule r0
+        (rule
             (query r (table_sub x x))
             (uni r {c0})
         )
 
-        (run_rules r0)
+        (run_ruleset_active)
     }
 
     assert!(vaa.canon(&eg) == c0.canon(&eg));
+}
+
+#[test]
+fn rewrite_helpers() {
+    let mut eg = EGraph::default();
+
+    eg.add_primitive_type::<String>();
+    eg.add_primitive_type::<usize>();
+
+    let v0 = eg.add_primitive_value(0usize);
+    let sa = eg.add_primitive_value("a".to_string());
+    let sb = eg.add_primitive_value("b".to_string());
+
+    execute! {eg;
+        (constructor table_add (TokenExpr TokenExpr) TokenExpr)
+        (constructor table_sub (TokenExpr TokenExpr) TokenExpr)
+        (constructor table_var (TokenString) TokenExpr)
+        (constructor table_const (TokenUsize) TokenExpr)
+
+        (= c0 (table_const v0))
+        (= a (table_var sa))
+        (= b (table_var sb))
+
+        // ruleset by default: ""
+        (rewrite (table_sub x x) {c0})
+
+        (set_ruleset_active "arithmetic")
+        (rewrite (table_add x y) (table_add y x))
+        (birewrite
+            (table_add x (table_add y z))
+            (table_add (table_add x y) z)
+        )
+
+        (= ab (table_add a b))
+        (= ab_b (table_add ab b))
+        (= b_ab (table_add b ab))
+
+        (run_ruleset "")
+    }
+
+    assert!(ab_b.canon(&eg) != b_ab.canon(&eg));
+    eg.run_ruleset_active();
+    assert!(ab_b.canon(&eg) == b_ab.canon(&eg));
 }
