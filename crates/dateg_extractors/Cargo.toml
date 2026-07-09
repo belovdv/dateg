@@ -1,0 +1,9 @@
+[package]
+name = "dateg_extractors"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dateg.path = "../dateg"
+ahash.workspace = true
+paste.workspace = true

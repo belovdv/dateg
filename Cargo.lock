@@ -240,6 +240,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dateg_extractors"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "dateg",
+ "paste",
+]
+
+[[package]]
 name = "dateg_macro"
 version = "0.1.0"
 dependencies = [
