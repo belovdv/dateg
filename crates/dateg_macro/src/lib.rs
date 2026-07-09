@@ -17,6 +17,7 @@ pub fn rule(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let rb = Ident::new("rb", eg.span());
     let mut emitter = Emitter {
         rb: rb.clone(),
+        action_span: rb.span(),
         counter: 0,
         variables: Default::default(),
         output: quote! {},
@@ -100,6 +101,7 @@ impl Parse for SExpr {
 
 struct Emitter {
     rb: Ident,
+    action_span: Span,
     counter: usize,
     variables: HashSet<Ident>,
     output: TokenStream,
@@ -114,6 +116,7 @@ impl Emitter {
 
     fn emit_action(&mut self, action: &Action) -> Result<()> {
         let Action { action, lhs, rhs } = action;
+        self.action_span = action.span();
         self.emit(quote! { #[cfg(false)] struct #action; });
         let rb = self.rb.clone();
         match action.to_string().as_str() {
@@ -125,7 +128,8 @@ impl Emitter {
             "uni" => {
                 let lhs = self.emit_arg(Kind::Add, lhs)?;
                 let rhs = self.emit_arg(Kind::Add, rhs)?;
-                self.emit(quote! { #rb.union(#lhs, #rhs); });
+                let uni = Ident::new("union", self.action_span);
+                self.emit(quote! { #rb.#uni(#lhs, #rhs); });
             }
             a => {
                 let msg = format!("unknown action `{a}`");
@@ -144,10 +148,10 @@ impl Emitter {
         if matches!(kind, Kind::Query) {
             self.maybe_init_var(bind, kind).unwrap();
         }
+        let action = Ident::new(kind.to_str(), self.action_span);
         match kind {
-            Kind::Query => self.emit(quote! { #rb.query(#f, #args_tuple, #bind); }),
-            Kind::Add => self.emit(quote! { let #bind = #rb.add(#f, #args_tuple); }),
-            Kind::Set => self.emit(quote! { #rb.set(#f, #args_tuple, #bind); }),
+            Kind::Add => self.emit(quote! { let #bind = #rb.#action(#f, #args_tuple); }),
+            _ => self.emit(quote! { #rb.#action(#f, #args_tuple, #bind); }),
         }
         Ok(())
     }
@@ -205,6 +209,13 @@ impl Kind {
             "set" => Self::Set,
             _ => return None,
         })
+    }
+    fn to_str(self) -> &'static str {
+        match self {
+            Self::Query => "query",
+            Self::Add => "add",
+            Self::Set => "set",
+        }
     }
     fn args_handling(self) -> Self {
         match self {
