@@ -35,15 +35,15 @@ macro_rules! execute {
     (@$eg:expr; rule $($body:tt)*) => {
         $crate::rule!{$eg; $($body)* };
     };
-    (@$eg:expr; rewrite ($($lhs:tt)*) ($($rhs:tt)*)) => {
-        $crate::rule!{$eg; (query __r ($($lhs)*)) (set __r ($($rhs)*)) };
+    (@$eg:expr; rewrite ($($lhs:tt)*) ($($rhs:tt)*) $(if $((query $($cond:tt)*))+)?) => {
+        $crate::rule!{$eg; (query __r ($($lhs)*)) (set __r ($($rhs)*)) $($((query $($cond)*))+)? };
+    };
+    (@$eg:expr; birewrite ($($lhs:tt)*) ($($rhs:tt)*) $(if $((query $($cond:tt)*))+)?) => {
+        $crate::rule!{$eg; (query __r ($($lhs)*)) (set __r ($($rhs)*)) $($((query $($cond)*))+)? };
+        $crate::rule!{$eg; (query __r ($($rhs)*)) (set __r ($($lhs)*)) $($((query $($cond)*))+)? };
     };
     (@$eg:expr; rewrite ($($lhs:tt)*) $rhs:tt) => {
         $crate::rule!{$eg; (query __r ($($lhs)*)) (uni __r $rhs) };
-    };
-    (@$eg:expr; birewrite ($($lhs:tt)*) ($($rhs:tt)*)) => {
-        $crate::rule!{$eg; (query __r ($($lhs)*)) (set __r ($($rhs)*)) };
-        $crate::rule!{$eg; (query __r ($($rhs)*)) (set __r ($($lhs)*)) };
     };
 
     // Constants

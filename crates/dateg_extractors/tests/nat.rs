@@ -41,24 +41,19 @@ pub fn eg() -> EGraph {
         (birewrite (mul x y)    (expr {s_mul} (expr2 x y)))
         (birewrite (add x y)    (expr {s_add} (expr2 x y)))
 
-        (rule
-            (query r (expr name (expr2 x y)))
-            (query u (is_comas name))
-            (set r (expr name (expr2 y x)))
+        (rewrite
+            (expr name (expr2 x y))
+            (expr name (expr2 y x))
+            if (query u (is_comas name))
         )
-        (rule
-            (query r (expr name (expr2 x (expr name (expr2 y z)))))
-            (query u (is_comas name))
-            (set r (expr name (expr2 (expr name (expr2 x y)) z)))
-        )
-        (rule
-            (query r (expr name (expr2 (expr name (expr2 x y)) z)))
-            (query u (is_comas name))
-            (set r (expr name (expr2 x (expr name (expr2 y z)))))
+        (birewrite
+            (expr name (expr2 x (expr name (expr2 y z))))
+            (expr name (expr2 (expr name (expr2 x y)) z))
+            if (query u (is_comas name))
         )
 
         (birewrite (inc x) (add x (one)))
-        (rule // x -> 1 * x
+        (rule
             (query r (expr name args))
             (set r (mul r (one)))
         )
