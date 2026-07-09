@@ -150,7 +150,9 @@ impl Emitter {
         }
         let action = Ident::new(kind.to_str(), self.action_span);
         match kind {
-            Kind::Add => self.emit(quote! { let #bind = #rb.#action(#f, #args_tuple); }),
+            Kind::Add => {
+                self.emit(quote! { let #bind = dateg::Entry::Var(#rb.#action(#f, #args_tuple)); })
+            }
             _ => self.emit(quote! { #rb.#action(#f, #args_tuple, #bind); }),
         }
         Ok(())
@@ -169,7 +171,7 @@ impl Emitter {
                 self.maybe_init_var(ident, kind)?;
                 Ok(quote! { #ident })
             }
-            SExpr::Custom(expr) => Ok(quote! { #expr }),
+            SExpr::Custom(expr) => Ok(quote! { dateg::Entry::Const(#expr) }),
             SExpr::Nested(f, args) => {
                 let tmp = self.new_tmp_var_ident(f.span());
                 self.emit_atom(kind, &tmp, f, args)?;
@@ -185,7 +187,7 @@ impl Emitter {
                     .into_compile_error());
             }
             let rb = self.rb.clone();
-            self.emit(quote! { let #var = #rb.var_named(stringify!(#var)); });
+            self.emit(quote! { let #var = dateg::Entry::Var(#rb.var_named(stringify!(#var))); });
         }
         Ok(())
     }

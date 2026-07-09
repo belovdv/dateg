@@ -8,6 +8,15 @@ pub enum Entry<T> {
     Const(T),
     Var(Var<T>),
 }
+impl<T: Token> Clone for Entry<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Const(arg0) => Self::Const(arg0.clone()),
+            Self::Var(arg0) => Self::Var(arg0.clone()),
+        }
+    }
+}
+impl<T: Token> Copy for Entry<T> {}
 pub struct Var<T>(usize, PhantomData<T>);
 impl<T> Clone for Var<T> {
     fn clone(&self) -> Self {
@@ -67,74 +76,56 @@ impl<'a> RuleBuilder<'a> {
     }
 
     /// LHS: query table
-    pub fn query<S: Schema, In>(
+    pub fn query<S: Schema>(
         &mut self,
         table: Table<S>,
-        inputs: In,
-        output: impl Into<Entry<S::Output>>,
+        inputs: InputEntries<S>,
+        output: Entry<S::Output>,
     ) where
-        IntoTuple<In>: Into<InputEntries<S>>,
         InputEntries<S>: EntryTuple,
     {
-        let mut entries = IntoTuple(inputs).into().into_entries(self);
-        entries.push(output.into().into_entry(self));
+        let mut entries = inputs.into_entries(self);
+        entries.push(output.into_entry(self));
         self.inner
             .query_table(table.egglog(), &entries, None)
             .unwrap();
     }
     /// RHS: use constructor
-    pub fn add<S: Schema<DefaultVal = DefaultValFreshId>, In>(
+    pub fn add<S: Schema<DefaultVal = DefaultValFreshId>>(
         &mut self,
         table: Table<S>,
-        inputs: In,
+        inputs: InputEntries<S>,
     ) -> Var<S::Output>
     where
-        IntoTuple<In>: Into<InputEntries<S>>,
         InputEntries<S>: EntryTuple,
     {
-        let entries = IntoTuple(inputs).into().into_entries(self);
+        let entries = inputs.into_entries(self);
         let var = self
             .inner
             .lookup(table.egglog(), &entries, || "".to_string());
         self._add_var(QueryEntry::Var(var))
     }
     /// RHS: set value
-    pub fn set<S: Schema, In>(
+    pub fn set<S: Schema>(
         &mut self,
         table: Table<S>,
-        inputs: In,
-        output: impl Into<Entry<S::Output>>,
+        inputs: InputEntries<S>,
+        output: Entry<S::Output>,
     ) where
-        IntoTuple<In>: Into<InputEntries<S>>,
         InputEntries<S>: EntryTuple,
     {
-        let mut entries = IntoTuple(inputs).into().into_entries(self);
-        entries.push(output.into().into_entry(self));
+        let mut entries = inputs.into_entries(self);
+        entries.push(output.into_entry(self));
         self.inner.set(table.egglog(), &entries);
     }
-    /// Union two ids
-    pub fn union<T: TokenValueOpaqueMarker>(
-        &mut self,
-        a: impl Into<Entry<T>>,
-        b: impl Into<Entry<T>>,
-    ) {
-        let a = a.into().into_entry(self);
-        let b = b.into().into_entry(self);
+    /// RHS: Union two ids
+    pub fn union<T: TokenValueOpaqueMarker>(&mut self, a: Entry<T>, b: Entry<T>) {
+        let a = a.into_entry(self);
+        let b = b.into_entry(self);
         self.inner.union(a, b);
     }
 
     pub fn build(self) -> RuleId {
         self.inner.build()
-    }
-}
-
-impl<T: Token> From<T> for Entry<T> {
-    fn from(value: T) -> Self {
-        Self::Const(value)
-    }
-}
-impl<T: Token> From<Var<T>> for Entry<T> {
-    fn from(value: Var<T>) -> Self {
-        Self::Var(value)
     }
 }

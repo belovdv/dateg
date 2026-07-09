@@ -47,7 +47,7 @@ macro_rules! execute {
     };
 
     // Constants
-    (@$eg:expr; = $value:tt ($table_token:ident $($args:ident)*)) => {
+    (@$eg:expr; = $value:ident ($table_token:ident $($args:ident)*)) => {
         #[cfg(false)] fn $table_token() {} // syntax highlighting hack
         let $value = $eg.row_add($table_token, ($($args,)*));
     };
