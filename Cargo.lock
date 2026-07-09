@@ -231,11 +231,21 @@ name = "dateg"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "dateg_macro",
  "egglog-bridge",
  "egglog-core-relations",
  "egglog-numeric-id",
  "indexmap",
  "paste",
+]
+
+[[package]]
+name = "dateg_macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

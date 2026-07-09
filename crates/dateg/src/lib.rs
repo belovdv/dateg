@@ -19,6 +19,8 @@ pub use tuple::*;
 pub use egglog_bridge::{FunctionId, RuleId};
 pub use egglog_core_relations::{BaseValue, Value};
 
+pub use dateg_macro::rule;
+
 #[derive(Default)]
 pub struct EGraph {
     inner: egglog_bridge::EGraph,

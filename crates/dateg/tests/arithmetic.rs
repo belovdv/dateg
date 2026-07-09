@@ -94,19 +94,19 @@ fn rule_builder() {
 
     execute! {eg;
         // (x + y) + z -> x + (y + z)
-        (rule r1 { x y z r }
+        (rule r1
             (query r (table_add (table_add x y) z))
             (set r (table_add x (table_add y z)))
         )
 
         // x + (y - x) -> y
-        (rule r2 { x y r }
+        (rule r2
             (query r (table_add x (table_sub y x)))
             (uni r y)
         )
 
         // check nested `add`
-        (rule _syntax { x y r }
+        (rule _syntax
             (query r (table_add x y))
             (add _xy2 (table_add (table_add x y) (table_add x y)))
         )
@@ -140,9 +140,9 @@ fn rule_builder_external_value() {
         (= vaa (table_sub va va))
 
         // x - x -> 0
-        (rule r0 { x r }
+        (rule r0
             (query r (table_sub x x))
-            (uni r c0)
+            (uni r {c0})
         )
 
         (run_rules r0)
