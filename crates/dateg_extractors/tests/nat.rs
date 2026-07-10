@@ -1,4 +1,6 @@
-use dateg::{EGraph, TokenValueOpaque, TokenValuePrimitive, execute};
+#![allow(unused)]
+
+use dateg::{EGraph, Token, TokenValueOpaque, TokenValuePrimitive, execute};
 
 pub struct Expr;
 pub struct ExprTuple;
@@ -62,4 +64,16 @@ pub fn eg() -> EGraph {
     }
 
     eg
+}
+
+pub fn get_val(eg: &mut EGraph, val: usize) -> TokenExpr {
+    execute! {eg;
+        (constructor one () TokenExpr)
+        (constructor inc (TokenExpr) TokenExpr)
+    }
+    let mut expr = eg.row_get(one, ()).unwrap();
+    for _ in 1..val {
+        expr = eg.row_get(inc, (expr,)).unwrap();
+    }
+    expr.canon(eg)
 }

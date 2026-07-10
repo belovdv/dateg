@@ -4,19 +4,7 @@ use dateg::{EGraph, Token, execute};
 use dateg_extractors::tree_basic;
 use dateg_extractors::tree_basic::IndexGet;
 
-use crate::nat::{TokenExpr, TokenExprTuple, TokenString};
-
-fn get_val(eg: &mut EGraph, val: usize) -> TokenExpr {
-    execute! {eg;
-        (constructor one () TokenExpr)
-        (constructor inc (TokenExpr) TokenExpr)
-    }
-    let mut expr = eg.row_get(one, ()).unwrap();
-    for _ in 1..val {
-        expr = eg.row_get(inc, (expr,)).unwrap();
-    }
-    expr.canon(eg)
-}
+use crate::nat::{TokenExpr, TokenExprTuple, TokenString, get_val};
 
 #[test]
 fn concrete() {
