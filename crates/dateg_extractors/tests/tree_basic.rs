@@ -1,8 +1,7 @@
 mod nat;
 
 use dateg::{EGraph, Token, execute};
-use dateg_extractors::tree_basic;
-use dateg_extractors::tree_basic::IndexGet;
+use dateg_extractors::{IndexFor, define_index};
 
 use crate::nat::{TokenExpr, TokenExprTuple, TokenString, get_val};
 
@@ -23,18 +22,17 @@ fn concrete() {
     }
     while eg.run_ruleset("") {}
 
-    tree_basic!(Index::extract
+    define_index!(Index
         (datatype TokenExpr -> Expr
             One ()
             Inc (TokenExpr)
             Mul (TokenExpr TokenExpr)
         )
     );
-
-    let index = Index::extract(&eg, (one, inc, mul));
+    let index = Index::extractor_tree_basic(&eg, (one, inc, mul));
 
     fn eval(eg: &EGraph, index: &Index, expr: TokenExpr) -> usize {
-        match index.get_first(expr.canon(eg)) {
+        match index.value(expr.canon(eg)) {
             Expr::One(()) => 1,
             Expr::Inc((e,)) => eval(eg, index, e) + 1,
             Expr::Mul((a, b)) => eval(eg, index, a) * eval(eg, index, b),
@@ -42,7 +40,7 @@ fn concrete() {
     }
     fn expr_to_strings(eg: &EGraph, index: &Index, expr: TokenExpr) -> Vec<String> {
         let mut r = vec![];
-        for option in index.get(expr.canon(eg)).unwrap().1.iter() {
+        for option in index.get_full(expr.canon(eg)).unwrap().1.iter() {
             match option {
                 Expr::One(()) => r.push(format!("o")),
                 Expr::Inc((e,)) => {
@@ -81,7 +79,7 @@ fn concrete() {
     let mut expr = eg.row_get(one, ()).unwrap();
     for value in 1..=13 {
         assert_eq!(value, eval(&eg, &index, expr));
-        let (cost, _) = index.get(expr.canon(&eg)).unwrap();
+        let (cost, _) = index.get_full(expr.canon(&eg)).unwrap();
         let mut options = expr_to_strings(&eg, &index, expr);
         for option in options.iter() {
             assert_eq!(option.len(), *cost);
@@ -92,7 +90,7 @@ fn concrete() {
         expr = eg.row_get(inc, (expr,)).unwrap();
     }
 
-    tree_basic!(IndexFullC1::extract
+    define_index!(IndexFullC1
         (datatype TokenExpr -> IFExprC1
             IFC1One ()
             IFC1Inc (TokenExpr)
@@ -100,8 +98,8 @@ fn concrete() {
             IFC1Square (TokenExpr)
         )
     );
-    let index_full_c1 = IndexFullC1::extract(&eg, (one, inc, mul, square));
-    tree_basic!(IndexFullC2::extract
+    let index_full_c1 = IndexFullC1::extractor_tree_basic(&eg, (one, inc, mul, square));
+    define_index!(IndexFullC2
         (datatype TokenExpr -> IFExprC2
             IFC2One ()
             IFC2Inc (TokenExpr)
@@ -109,8 +107,8 @@ fn concrete() {
             IFC2Square (TokenExpr) :cost 2
         )
     );
-    let index_full_c2 = IndexFullC2::extract(&eg, (one, inc, mul, square));
-    tree_basic!(IndexFullC3::extract
+    let index_full_c2 = IndexFullC2::extractor_tree_basic(&eg, (one, inc, mul, square));
+    define_index!(IndexFullC3
         (datatype TokenExpr -> IFC3Expr
             IFC3One ()
             IFC3Inc (TokenExpr)
@@ -118,21 +116,21 @@ fn concrete() {
             IFC3Square (TokenExpr) :cost 3
         )
     );
-    let index_full_c3 = IndexFullC3::extract(&eg, (one, inc, mul, square));
+    let index_full_c3 = IndexFullC3::extractor_tree_basic(&eg, (one, inc, mul, square));
 
     let e4 = get_val(&mut eg, 4);
     // square is not used, there is no such thing
-    assert_eq!(index.get(e4).unwrap().1.len(), 1);
-    assert_eq!(index.get(e4).unwrap().0, 4);
+    assert_eq!(index.get_full(e4).unwrap().1.len(), 1);
+    assert_eq!(index.get_full(e4).unwrap().0, 4);
     // only square is used: cost(iiio) > cost(sio)
-    assert_eq!(index_full_c1.get(e4).unwrap().1.len(), 1);
-    assert_eq!(index_full_c1.get(e4).unwrap().0, 3);
+    assert_eq!(index_full_c1.get_full(e4).unwrap().1.len(), 1);
+    assert_eq!(index_full_c1.get_full(e4).unwrap().0, 3);
     // square is used: cost(iiio) = cost(sio)
-    assert_eq!(index_full_c2.get(e4).unwrap().1.len(), 2);
-    assert_eq!(index_full_c2.get(e4).unwrap().0, 4);
+    assert_eq!(index_full_c2.get_full(e4).unwrap().1.len(), 2);
+    assert_eq!(index_full_c2.get_full(e4).unwrap().0, 4);
     // square is not used: cost(iiio) < cost(sio)
-    assert_eq!(index_full_c3.get(e4).unwrap().1.len(), 1);
-    assert_eq!(index_full_c3.get(e4).unwrap().0, 4);
+    assert_eq!(index_full_c3.get_full(e4).unwrap().1.len(), 1);
+    assert_eq!(index_full_c3.get_full(e4).unwrap().0, 4);
 }
 
 #[test]
@@ -155,9 +153,9 @@ fn generic() {
     }
     while eg.run_ruleset("") {}
 
-    tree_basic!(Index::extract
+    define_index!(Index
         (datatype TokenExpr -> Expr
-            Expr (TokenString TokenExprTuple)
+            ExprAny (TokenString TokenExprTuple)
         )
         (datatype TokenExprTuple -> ExprTuple
             Expr0 ()
@@ -166,12 +164,12 @@ fn generic() {
         )
     );
 
-    let index = Index::extract(&eg, expr, (expr0, expr1, expr2));
+    let index = Index::extractor_tree_basic(&eg, expr, (expr0, expr1, expr2));
 
     impl Index {
         fn expr_to_string(&self, eg: &EGraph, expr: TokenExpr) -> String {
-            match self.get_first(expr) {
-                Expr::Expr((op, args)) => match self.get_first(args) {
+            match self.value(expr) {
+                Expr::ExprAny((op, args)) => match self.value(args) {
                     ExprTuple::Expr0(()) => format!("({})", op.get(eg)),
                     ExprTuple::Expr1((a,)) => {
                         format!("({} {})", op.get(eg), self.expr_to_string(eg, a))

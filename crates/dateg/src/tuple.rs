@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use egglog_bridge::{ColumnTy, QueryEntry};
 use egglog_core_relations::Value;
 
@@ -7,6 +9,8 @@ pub trait Tuple {
     const LEN: usize;
     type Array<T>;
     type TypeMapped<M: TypeMapper>;
+
+    fn type_ids() -> impl Iterator<Item = TypeId>;
 }
 
 pub trait TypeMapper {
@@ -16,6 +20,7 @@ pub trait TypeMapper {
 pub trait TokenTuple: Tuple + Copy + 'static {
     fn egglog(eg: &egglog_bridge::EGraph) -> Vec<ColumnTy>;
     fn into_values(self) -> Vec<Value>;
+    fn opaque_into_values(self) -> impl Iterator<Item = Value>;
     fn from_values(values: &[Value]) -> Self;
 }
 pub trait EntryTuple: Tuple {
@@ -33,10 +38,14 @@ macro_rules! impl_tt {
         impl_tt!($($tail)*);
     };
     (@ $($T:ident)*) => {
-        impl<$($T),*> Tuple for ($($T,)*) {
+        impl<$($T: 'static),*> Tuple for ($($T,)*) {
             const LEN: usize = count!($($T)*);
             type Array<T> = [T; count!($($T)*)];
             type TypeMapped<Ma: TypeMapper> = ($(Ma::Output<$T>,)*);
+
+            fn type_ids() -> impl Iterator<Item = TypeId> {
+                [$(TypeId::of::<$T>()),*].into_iter()
+            }
         }
         impl<$($T: Token),*> TokenTuple for ($($T,)*) {
             fn egglog(eg: &egglog_bridge::EGraph) -> Vec<ColumnTy> {
@@ -46,6 +55,11 @@ macro_rules! impl_tt {
                 #[allow(non_snake_case)]
                 let ($($T,)*) = self;
                 vec![$($T.into_value()),*]
+            }
+            fn opaque_into_values(self) -> impl Iterator<Item = Value> {
+                #[allow(non_snake_case)]
+                let ($($T,)*) = self;
+                [$($T.opaque_into_value()),*].into_iter().flatten()
             }
             fn from_values(values: &[Value]) -> Self {
                 let mut iter = values.iter();
@@ -82,6 +96,10 @@ impl Tuple for () {
     const LEN: usize = 0;
     type Array<T> = [T; 0];
     type TypeMapped<M: TypeMapper> = ();
+
+    fn type_ids() -> impl Iterator<Item = TypeId> {
+        [].into_iter()
+    }
 }
 impl TokenTuple for () {
     fn egglog(_: &egglog_bridge::EGraph) -> Vec<ColumnTy> {
@@ -89,6 +107,9 @@ impl TokenTuple for () {
     }
     fn into_values(self) -> Vec<Value> {
         vec![]
+    }
+    fn opaque_into_values(self) -> impl Iterator<Item = Value> {
+        [].into_iter()
     }
     fn from_values(_: &[Value]) -> Self {
         ()

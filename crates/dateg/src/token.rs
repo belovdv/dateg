@@ -10,10 +10,15 @@ use crate::EGraph;
 
 pub trait Token: Copy + Eq + Hash + Send + Sync + 'static {
     fn canon(&self, eg: &EGraph) -> Self;
+    const IS_OPAQUE: bool;
 
     fn from_value(value: Value) -> Self;
     fn into_value(self) -> Value;
     fn egglog(eg: &egglog_bridge::EGraph) -> ColumnTy;
+
+    fn opaque_into_value(self) -> Option<Value> {
+        Self::IS_OPAQUE.then(|| self.into_value())
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -46,6 +51,10 @@ impl<T> std::fmt::Debug for TokenValueOpaque<T> {
 }
 
 impl<T: BaseValue> Token for TokenValuePrimitive<T> {
+    fn canon(&self, _: &EGraph) -> Self {
+        *self
+    }
+    const IS_OPAQUE: bool = false;
     fn from_value(id: Value) -> Self {
         let _p = PhantomData;
         Self(id, _p)
@@ -56,9 +65,6 @@ impl<T: BaseValue> Token for TokenValuePrimitive<T> {
     fn egglog(eg: &egglog_bridge::EGraph) -> ColumnTy {
         ColumnTy::Base(eg.base_values().get_ty::<T>())
     }
-    fn canon(&self, _: &EGraph) -> Self {
-        *self
-    }
 }
 impl<T: BaseValue> TokenValuePrimitive<T> {
     /// Note: this can call [`T::clone`] internally
@@ -68,6 +74,10 @@ impl<T: BaseValue> TokenValuePrimitive<T> {
 }
 
 impl<T: Send + Sync + 'static> Token for TokenValueOpaque<T> {
+    fn canon(&self, eg: &EGraph) -> Self {
+        Self::from_value(eg.inner.get_canon_repr(self.0, ColumnTy::Id))
+    }
+    const IS_OPAQUE: bool = true;
     fn from_value(id: Value) -> Self {
         let _p = PhantomData;
         Self(id, _p)
@@ -77,9 +87,6 @@ impl<T: Send + Sync + 'static> Token for TokenValueOpaque<T> {
     }
     fn egglog(_: &egglog_bridge::EGraph) -> ColumnTy {
         ColumnTy::Id
-    }
-    fn canon(&self, eg: &EGraph) -> Self {
-        Self::from_value(eg.inner.get_canon_repr(self.0, ColumnTy::Id))
     }
 }
 impl<T> TokenValueOpaque<T> {
