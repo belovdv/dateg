@@ -37,7 +37,7 @@ impl<Index> ExtractorTree<Index> {
                     cost += *cost_opaque;
                 }
                 if index.update(output, cost, C::into_variant(inputs)) {
-                    costs.insert(output.into_value(), cost);
+                    costs.insert(output.into_egglog(), cost);
                     updated = true;
                 }
             });

@@ -9,11 +9,11 @@ use crate::nat::{TokenExpr, get_val};
 fn dag_basic() {
     let mut eg = nat::eg();
     execute! {eg;
-        (constructor inc (TokenExpr) TokenExpr)
-        (constructor mul (TokenExpr TokenExpr) TokenExpr)
-        (constructor one () TokenExpr)
-        (constructor add (TokenExpr TokenExpr) TokenExpr)
-        (constructor square (TokenExpr) TokenExpr)
+        (get_constructor inc (TokenExpr) TokenExpr)
+        (get_constructor mul (TokenExpr TokenExpr) TokenExpr)
+        (get_constructor one () TokenExpr)
+        (get_constructor add (TokenExpr TokenExpr) TokenExpr)
+        (get_constructor square (TokenExpr) TokenExpr)
 
         (= e1 (one))
         (= e2 (inc e1))

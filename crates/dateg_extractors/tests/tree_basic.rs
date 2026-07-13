@@ -1,7 +1,7 @@
 mod nat;
 
-use dateg::{EGraph, Token, execute};
 use dateg_extractors::{IndexFor, define_index};
+use dateg::{EGraph, execute};
 
 use crate::nat::{TokenExpr, TokenExprTuple, TokenString, get_val};
 
@@ -9,11 +9,11 @@ use crate::nat::{TokenExpr, TokenExprTuple, TokenString, get_val};
 fn concrete() {
     let mut eg = nat::eg();
     execute! {eg;
-        (constructor inc (TokenExpr) TokenExpr)
-        (constructor mul (TokenExpr TokenExpr) TokenExpr)
-        (constructor one () TokenExpr)
-        (constructor add (TokenExpr TokenExpr) TokenExpr)
-        (constructor square (TokenExpr) TokenExpr)
+        (get_constructor inc (TokenExpr) TokenExpr)
+        (get_constructor mul (TokenExpr TokenExpr) TokenExpr)
+        (get_constructor one () TokenExpr)
+        (get_constructor add (TokenExpr TokenExpr) TokenExpr)
+        (get_constructor square (TokenExpr) TokenExpr)
 
         (= e1 (one))
         (= e2 (inc e1))
@@ -137,14 +137,14 @@ fn concrete() {
 fn generic() {
     let mut eg = nat::eg();
     execute! {eg;
-        (constructor expr (TokenString TokenExprTuple) TokenExpr)
-        (constructor expr0 () TokenExprTuple)
-        (constructor expr1 (TokenExpr) TokenExprTuple)
-        (constructor expr2 (TokenExpr TokenExpr) TokenExprTuple)
+        (get_constructor expr (TokenString TokenExprTuple) TokenExpr)
+        (get_constructor expr0 () TokenExprTuple)
+        (get_constructor expr1 (TokenExpr) TokenExprTuple)
+        (get_constructor expr2 (TokenExpr TokenExpr) TokenExprTuple)
 
-        (constructor one () TokenExpr)
-        (constructor inc (TokenExpr) TokenExpr)
-        (constructor mul (TokenExpr TokenExpr) TokenExpr)
+        (get_constructor one () TokenExpr)
+        (get_constructor inc (TokenExpr) TokenExpr)
+        (get_constructor mul (TokenExpr TokenExpr) TokenExpr)
 
         (= e1 (one))
         (= e2 (inc e1))

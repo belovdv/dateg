@@ -1,10 +1,10 @@
 use ahash::AHashSet;
-use dateg::{EGraph, Token, TokenValueOpaque, TokenValuePrimitive, execute, rule};
+use dateg::{EGraph, TokenOpaque, TokenPrimitive, execute, rule};
 
 struct Expr;
-type TokenExpr = TokenValueOpaque<Expr>;
-type TokenUsize = TokenValuePrimitive<usize>;
-type TokenString = TokenValuePrimitive<String>;
+type TokenExpr = TokenOpaque<Expr>;
+type TokenUsize = TokenPrimitive<usize>;
+type TokenString = TokenPrimitive<String>;
 
 #[test]
 fn add_and_get_values() {

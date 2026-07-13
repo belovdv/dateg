@@ -1,82 +1,90 @@
-//! Schema: description of table, defining signature of methods, working with it
+use std::hash::Hash;
 
-use std::marker::PhantomData;
-
-use egglog_bridge::{DefaultVal, FunctionConfig, MergeFn};
-use egglog_core_relations::Value;
+use egglog_bridge::{ColumnTy, QueryEntry};
+use egglog_core_relations::{ExecutionState, Value};
 
 use crate::*;
 
-pub trait DefaultValT {
-    fn egglog(eg: &egglog_bridge::EGraph) -> DefaultVal;
+pub trait Schema: Copy + Eq + Hash + Send + Sync + 'static {
+    type Inputs: TokenTuple;
+    type Output: Token;
+    type AllowAdd: Bool;
+
+    fn egglog(eg: &egglog_bridge::EGraph) -> Vec<ColumnTy> {
+        let mut r = Self::Inputs::column_ty(eg);
+        r.push(Self::Output::column_ty(eg));
+        r
+    }
 }
-pub trait MergeFnT {
-    fn egglog(eg: &egglog_bridge::EGraph) -> MergeFn;
+
+impl<Inputs: TokenTuple, Output: Token, AllowAdd: Bool> Schema for (Inputs, Output, AllowAdd) {
+    type Inputs = Inputs;
+    type Output = Output;
+    type AllowAdd = AllowAdd;
 }
-macro_rules! into_type {
-    ($Egglog:ident $Variant:ident) => {
-        paste::paste! {
-            pub struct [< $Egglog $Variant >];
-            impl [< $Egglog T >] for [< $Egglog $Variant >] {
-                fn egglog(_: &egglog_bridge::EGraph) -> $Egglog { $Egglog::$Variant }
+
+pub trait TokenTuple: Copy + Eq + Hash + Send + Sync + 'static {
+    fn column_ty(eg: &egglog_bridge::EGraph) -> Vec<ColumnTy>;
+    fn from_egglog(values: &[Value]) -> Self;
+    fn into_egglog(self) -> impl Iterator<Item = Value>;
+    fn into_egglog_vec(self) -> Vec<Value> {
+        self.into_egglog().collect()
+    }
+
+    type Entries: IntoEntries;
+
+    fn type_ids() -> impl Iterator<Item = TypeId>;
+    fn opaque_into_values(self) -> impl Iterator<Item = Value>;
+}
+pub trait IntoEntries {
+    fn into_entries(self, rb: &mut RuleBuilder) -> Vec<QueryEntry>;
+}
+pub trait TokenTuplePrimitive: TokenTuple {
+    type Inner: Send + Sync + 'static;
+    fn into_values(self, es: &ExecutionState) -> Self::Inner;
+}
+
+macro_rules! impl_tt {
+    () => {};
+    ($head:ident $($tail:ident)*) => {
+        impl_tt!(@ $($tail)*);
+        impl_tt!($($tail)*);
+    };
+    (@ $($T:ident)*) => {
+        #[allow(unused)]
+        impl<$($T: Token),*> TokenTuple for ($($T,)*) {
+            fn column_ty(eg: &egglog_bridge::EGraph) -> Vec<ColumnTy> {
+                vec![$($T::column_ty(eg)),*]
+            }
+            fn from_egglog(values: &[Value]) -> Self {
+                let mut iter = values.iter();
+                let r = ( $($T::from_egglog(*iter.next().unwrap()),)* );
+                assert!(iter.next().is_none());
+                r
+            }
+            fn into_egglog(self) -> impl Iterator<Item = Value> {
+                #[allow(non_snake_case)]
+                let ($($T,)*) = self;
+                [$($T.into_egglog()),*].into_iter()
+            }
+            type Entries = ($(Entry<$T>,)*);
+            fn type_ids() -> impl Iterator<Item = TypeId> {
+                [$(TypeId::of::<$T>()),*].into_iter()
+            }
+            fn opaque_into_values(self) -> impl Iterator<Item = Value> {
+                #[allow(non_snake_case)]
+                let ($($T,)*) = self;
+                <[Option<Value>; _]>::into_iter([$($T.as_opaque()),*]).flatten()
+            }
+        }
+        #[allow(unused)]
+        impl<$($T: Token),*> IntoEntries for ($(Entry<$T>,)*) {
+            fn into_entries(self, rb: &mut RuleBuilder) -> Vec<QueryEntry> {
+                #[allow(non_snake_case)]
+                let ($($T,)*) = self;
+                vec![$($T.into_entry(rb)),*]
             }
         }
     };
 }
-into_type!(DefaultVal FreshId);
-into_type!(DefaultVal Fail);
-into_type!(MergeFn UnionId);
-into_type!(MergeFn AssertEq);
-pub struct DefaultValConst0;
-impl DefaultValT for DefaultValConst0 {
-    fn egglog(_: &egglog_bridge::EGraph) -> DefaultVal {
-        egglog_bridge::DefaultVal::Const(Value::new_const(0))
-    }
-}
-pub fn token_unit() -> TokenValuePrimitive<()> {
-    use std::sync::OnceLock;
-    static TOKEN_UNIT: OnceLock<TokenValuePrimitive<()>> = OnceLock::new();
-    *TOKEN_UNIT.get_or_init(|| TokenValuePrimitive::from_value(Value::new_const(0)))
-}
-
-pub trait Schema: 'static {
-    type Inputs: TokenTuple;
-    type Output: Token;
-
-    type DefaultVal: DefaultValT;
-    type MergeFn: MergeFnT;
-
-    fn egglog(eg: &egglog_bridge::EGraph, name: impl ToString) -> FunctionConfig {
-        let mut schema = Self::Inputs::egglog(eg);
-        schema.push(Self::Output::egglog(eg));
-        FunctionConfig {
-            schema,
-            default: Self::DefaultVal::egglog(eg),
-            merge: Self::MergeFn::egglog(eg),
-            name: name.to_string(),
-            can_subsume: false,
-        }
-    }
-}
-
-pub struct TableConstructorSchema<In, Out>(PhantomData<(In, Out)>);
-impl<In: TokenTuple, Out: TokenValueOpaqueMarker> Schema for TableConstructorSchema<In, Out> {
-    type Inputs = In;
-    type Output = Out;
-    type DefaultVal = DefaultValFreshId;
-    type MergeFn = MergeFnUnionId;
-}
-pub struct TableFunctionSchema<In, Out>(PhantomData<(In, Out)>);
-impl<In: TokenTuple, Out: Token> Schema for TableFunctionSchema<In, Out> {
-    type Inputs = In;
-    type Output = Out;
-    type DefaultVal = DefaultValFail;
-    type MergeFn = MergeFnAssertEq;
-}
-pub struct TableRelationSchema<Types>(PhantomData<Types>);
-impl<Types: TokenTuple> Schema for TableRelationSchema<Types> {
-    type Inputs = Types;
-    type Output = TokenValuePrimitive<()>;
-    type DefaultVal = DefaultValConst0;
-    type MergeFn = MergeFnAssertEq;
-}
+impl_tt!(A B C D E F G H I J K L);

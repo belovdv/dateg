@@ -1,20 +1,23 @@
+mod access;
+mod function;
 mod macros;
-mod rule_builder;
+mod rule_build;
 mod rule_run;
 mod schema;
 mod table;
 mod token;
-mod tuple;
+mod utils;
 
 use std::any::TypeId;
 
 use ahash::AHashMap;
 
-pub use rule_builder::*;
+pub use function::*;
+pub use rule_build::*;
 pub use schema::*;
 pub use table::*;
 pub use token::*;
-pub use tuple::*;
+pub use utils::*;
 
 pub use egglog_bridge::{FunctionId, RuleId};
 pub use egglog_core_relations::{BaseValue, Value};
@@ -30,25 +33,11 @@ pub struct EGraph {
 }
 
 impl EGraph {
-    pub fn add_primitive_type<T: egglog_core_relations::BaseValue>(&mut self) {
+    pub fn add_primitive_type<T: BaseValue>(&mut self) {
         self.inner.base_values_mut().register_type::<T>();
     }
-
-    pub fn add_primitive_value<V: egglog_core_relations::BaseValue>(
-        &mut self,
-        value: V,
-    ) -> TokenValuePrimitive<V> {
-        TokenValuePrimitive::from_value(self.inner.base_values_mut().get(value))
-    }
-
-    pub fn set_ruleset_active(&mut self, rs: impl ToString) {
-        self.ruleset_active = rs.to_string();
-    }
-    pub fn add_ruleset_rule(&mut self, rule: RuleId) {
-        self.rulesets
-            .entry(self.ruleset_active.clone())
-            .or_default()
-            .push(rule);
+    pub fn add_primitive_value<V: BaseValue>(&mut self, value: V) -> TokenPrimitive<V> {
+        TokenPrimitive::from_egglog(self.inner.base_values_mut().get(value))
     }
 
     pub fn _inner(&self) -> &egglog_bridge::EGraph {

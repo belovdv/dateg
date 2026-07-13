@@ -10,15 +10,27 @@ macro_rules! execute {
     // Table
     (@$eg:expr; constructor $table:ident ($($Args:ident)*) $Ret:ident) => {
         #[cfg(false)] fn $table() {} // syntax highlighting hack
-        let $table = $eg.add_table_constructor::<($($Args,)*), $Ret>(stringify!($table));
+        let $table = $eg.new_table_constructor::<($($Args,)*), $Ret>(stringify!($table));
     };
     (@$eg:expr; function $table:ident ($($Args:ident)*) $Ret:ident) => {
         #[cfg(false)] fn $table() {} // syntax highlighting hack
-        let $table = $eg.add_table_function::<($($Args,)*), $Ret>(stringify!($table));
+        let $table = $eg.new_table_function::<($($Args,)*), $Ret>(stringify!($table));
     };
     (@$eg:expr; relation $table:ident ($($Args:ident)*)) => {
         #[cfg(false)] fn $table() {} // syntax highlighting hack
-        let $table = $eg.add_table_relation::<($($Args,)*)>(stringify!($table));
+        let $table = $eg.new_table_relation::<($($Args,)*)>(stringify!($table));
+    };
+    (@$eg:expr; get_constructor $table:ident ($($Args:ident)*) $Ret:ident) => {
+        #[cfg(false)] fn $table() {} // syntax highlighting hack
+        let $table = $eg.get_table::<(($($Args,)*), $Ret, $crate::True)>(stringify!($table));
+    };
+    (@$eg:expr; get_function $table:ident ($($Args:ident)*) $Ret:ident) => {
+        #[cfg(false)] fn $table() {} // syntax highlighting hack
+        let $table = $eg.get_table::<($($Args,)*), $Ret>(stringify!($table));
+    };
+    (@$eg:expr; get_relation $table:ident ($($Args:ident)*)) => {
+        #[cfg(false)] fn $table() {} // syntax highlighting hack
+        let $table = $eg.get_table::<($($Args,)*)>(stringify!($table));
     };
 
     // Ruleset

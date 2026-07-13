@@ -1,10 +1,10 @@
 mod nat;
 
-use dateg::{EGraph, Token, TokenValueOpaque, execute};
 use dateg_extractors::define_index;
+use dateg::{EGraph, TokenOpaque, execute};
 
 pub struct Expr;
-pub type TokenExpr = TokenValueOpaque<Expr>;
+pub type TokenExpr = TokenOpaque<Expr>;
 
 #[test]
 fn dag_basic() {

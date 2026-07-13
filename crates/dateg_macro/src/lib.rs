@@ -29,7 +29,7 @@ pub fn rule(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     };
 
     quote! {{
-        let mut #rb = #eg.rule_builder();
+        let mut #rb = #eg.rule_builder(None);
         #actions
         let id = #rb.build();
         #eg.add_ruleset_rule(id);

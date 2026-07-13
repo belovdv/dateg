@@ -1,12 +1,12 @@
 #![allow(unused)]
 
-use dateg::{EGraph, Token, TokenValueOpaque, TokenValuePrimitive, execute};
+use dateg::{EGraph, Token, TokenOpaque, TokenPrimitive, execute};
 
 pub struct Expr;
 pub struct ExprTuple;
-pub type TokenExpr = TokenValueOpaque<Expr>;
-pub type TokenExprTuple = TokenValueOpaque<ExprTuple>;
-pub type TokenString = TokenValuePrimitive<String>;
+pub type TokenExpr = TokenOpaque<Expr>;
+pub type TokenExprTuple = TokenOpaque<ExprTuple>;
+pub type TokenString = TokenPrimitive<String>;
 
 pub fn eg() -> EGraph {
     let mut eg = EGraph::default();
@@ -68,8 +68,8 @@ pub fn eg() -> EGraph {
 
 pub fn get_val(eg: &mut EGraph, val: usize) -> TokenExpr {
     execute! {eg;
-        (constructor one () TokenExpr)
-        (constructor inc (TokenExpr) TokenExpr)
+        (get_constructor one () TokenExpr)
+        (get_constructor inc (TokenExpr) TokenExpr)
     }
     let mut expr = eg.row_get(one, ()).unwrap();
     for _ in 1..val {

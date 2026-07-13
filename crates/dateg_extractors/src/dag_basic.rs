@@ -1,6 +1,6 @@
 use crate::index::{Constructor, IndexFor};
 use ahash::AHashMap;
-use dateg::{EGraph, FunctionId, Schema, Table, Token, TokenTuple, Tuple, Value};
+use dateg::{EGraph, FunctionId, Schema, Table, Token, TokenTuple, Value};
 use du_utils_timed::timed_print;
 use easy_smt::{Context, SExpr};
 use std::{any::TypeId, marker::PhantomData};
@@ -39,7 +39,7 @@ impl<Index: Default> ExtractorDAG<Index> {
         let mut ctx = std::mem::take(&mut self.ctx).unwrap();
         ctx.push().unwrap();
 
-        let var = self.values[&(TypeId::of::<Tok>(), token.into_value())].var_value;
+        let var = self.values[&(TypeId::of::<Tok>(), token.into_egglog())].var_value;
         ctx.assert(var).unwrap();
 
         match timed_print("check", 1000, || ctx.check()).unwrap() {
@@ -121,25 +121,28 @@ impl<Index: Default> ExtractorDAG<Index> {
         Index: IndexFor<C::Output, Sort = C::Sort>,
         S: Schema<Inputs = C::Inputs, Output = C::Output>,
     {
-        self.constructors_cost.insert(table.egglog(), cost);
+        self.constructors_cost.insert(table.into_egglog(), cost);
         self.constructors_init
             .push(Box::new(move |extractor, ctx, eg| {
-                let constructors = extractor.constructors.entry(table.egglog()).or_default();
+                let constructors = extractor
+                    .constructors
+                    .entry(table.into_egglog())
+                    .or_default();
                 eg.for_each_row(table, |inputs, output| {
-                    let inputs = inputs.into_values();
-                    if inputs.contains(&output.into_value()) {
+                    let inputs = inputs.into_egglog_vec();
+                    if inputs.contains(&output.into_egglog()) {
                         return;
                     }
                     let vd = extractor
                         .values
-                        .entry((TypeId::of::<S::Output>(), output.into_value()))
+                        .entry((TypeId::of::<S::Output>(), output.into_egglog()))
                         .or_insert_with(|| ValueData::new(ctx.gen_new_var("v")));
                     let input_tokens = S::Inputs::type_ids().zip(inputs);
                     let constructor = constructors
                         .entry(input_tokens.collect())
                         .or_insert_with(|| {
                             (
-                                (TypeId::of::<S::Output>(), output.into_value()),
+                                (TypeId::of::<S::Output>(), output.into_egglog()),
                                 ctx.gen_new_var("c"),
                             )
                         })
@@ -149,7 +152,7 @@ impl<Index: Default> ExtractorDAG<Index> {
             }));
         self.constructors_collect
             .push(Box::new(move |extractor, index, ctx| {
-                let constructor = &extractor.constructors[&table.egglog()];
+                let constructor = &extractor.constructors[&table.into_egglog()];
                 let (constructor, usage): (Vec<_>, Vec<_>) = constructor
                     .iter()
                     .map(|(inputs, (output, var))| ((inputs.clone(), *output), *var))
@@ -166,8 +169,8 @@ impl<Index: Default> ExtractorDAG<Index> {
                     if used {
                         let inputs: Vec<_> = inputs.iter().map(|(_, value)| *value).collect();
                         let was = index.get_map_mut().insert(
-                            S::Output::from_value(output.1),
-                            (0, vec![C::into_variant(S::Inputs::from_values(&inputs))]),
+                            S::Output::from_egglog(output.1),
+                            (0, vec![C::into_variant(S::Inputs::from_egglog(&inputs))]),
                         );
                         assert!(was.is_none());
                     }
