@@ -3,34 +3,44 @@
 #[rust_analyzer::macro_style(braces)]
 macro_rules! execute {
     ($eg:expr; $( ($action:tt $($prog:tt)*) )*) => {
-        $( $crate::execute!(@@ $action); )*
+        $( $crate::helper!(@highlight_ty $action); )*
         $( $crate::execute!(@ $eg; $action $($prog)*); )*
     };
 
     // Table
     (@$eg:expr; constructor $table:ident ($($Args:ident)*) $Ret:ident) => {
-        #[cfg(false)] fn $table() {} // syntax highlighting hack
-        let $table = $eg.new_table_constructor::<($($Args,)*), $Ret>(stringify!($table));
+        $crate::execute!(@@$eg; table new_table_constructor; $table ($($Args)*) $Ret);
     };
     (@$eg:expr; function $table:ident ($($Args:ident)*) $Ret:ident) => {
-        #[cfg(false)] fn $table() {} // syntax highlighting hack
-        let $table = $eg.new_table_function::<($($Args,)*), $Ret>(stringify!($table));
+        $crate::execute!(@@$eg; table new_table_function; $table ($($Args)*) $Ret);
     };
     (@$eg:expr; relation $table:ident ($($Args:ident)*)) => {
-        #[cfg(false)] fn $table() {} // syntax highlighting hack
-        let $table = $eg.new_table_relation::<($($Args,)*)>(stringify!($table));
+        $crate::execute!(@@$eg; table new_table_relation; $table ($($Args)*));
     };
-    (@$eg:expr; get_constructor $table:ident ($($Args:ident)*) $Ret:ident) => {
-        #[cfg(false)] fn $table() {} // syntax highlighting hack
-        let $table = $eg.get_table::<(($($Args,)*), $Ret, $crate::True)>(stringify!($table));
+    (@@$eg:expr; table $method:ident; $table:ident ($($Args:ident)*) $($Ret:ident)?) => {
+        #[cfg(false)] fn $table() {};
+        let $table = $eg.$method::<
+            ($($crate::helper!(@token $Args),)*)
+            $(, $crate::helper!(@token $Ret))?
+        >(stringify!($table));
     };
-    (@$eg:expr; get_function $table:ident ($($Args:ident)*) $Ret:ident) => {
-        #[cfg(false)] fn $table() {} // syntax highlighting hack
-        let $table = $eg.get_table::<($($Args,)*), $Ret>(stringify!($table));
+
+    // Values
+    (@$eg:expr; val $name:ident ($T:ident) {$val:expr}) => {
+        let $name = $eg.add_primitive_value::<$T>($val);
     };
-    (@$eg:expr; get_relation $table:ident ($($Args:ident)*)) => {
-        #[cfg(false)] fn $table() {} // syntax highlighting hack
-        let $table = $eg.get_table::<($($Args,)*)>(stringify!($table));
+    (@$eg:expr; add $name:ident ($table:ident $($args:ident)*)) => {
+        #[cfg(false)] fn $table() {}
+        let $name = $eg.row_add($table, ($($args,)*));
+    };
+    (@$eg:expr; set ($table:ident $($args:ident)*) $val:ident) => {
+        #[cfg(false)] fn $table() {}
+        $eg.row_set($table, ($($args,)*), $val);
+    };
+    // Helper for relation
+    (@$eg:expr; insert ($table:ident $($args:ident)*)) => {
+        #[cfg(false)] fn $table() {}
+        $eg.row_set($table, ($($args,)*), $crate::token_unit());
     };
 
     // Ruleset
@@ -57,20 +67,95 @@ macro_rules! execute {
     (@$eg:expr; rewrite ($($lhs:tt)*) $rhs:tt) => {
         $crate::rule!{$eg; (query __r ($($lhs)*)) (uni __r $rhs) };
     };
+}
 
-    // Constants
-    (@$eg:expr; = $value:ident ($table_token:ident $($args:ident)*)) => {
-        #[cfg(false)] fn $table_token() {} // syntax highlighting hack
-        let $value = $eg.row_add($table_token, ($($args,)*));
-    };
-    // Support for relation
-    (@$eg:expr; = () ($table_token:ident $($args:tt)*)) => {
-        #[cfg(false)] fn $table_token() {} // syntax highlighting hack
-        $eg.row_set($table_token, ($($args,)*), dateg::token_unit());
+#[macro_export]
+#[rust_analyzer::macro_style(parenthesized)]
+macro_rules! theory {
+    ($Theory:ident
+        ($(($sort_kind:ident $Sort:ident))*)
+        ($(($action:tt $name:tt $($prog:tt)*))*)
+        ($(($action_extra:tt $($prog_extra:tt)*))*)
+    ) => {
+        $( $crate::helper!(@highlight_ty $action); )*
+        $( $crate::helper!(@highlight_ty $action_extra); )*
+
+        impl Default for $Theory {
+            fn default() -> Self {
+                let mut eg = $crate::EGraph::default();
+                $crate::theory!(@sort_init ty eg; ());
+                $( $crate::theory!(@sort_init $sort_kind eg; $Sort); )*
+                $( $crate::execute!(@eg; $action $name $($prog)*); )*
+                $( $crate::execute!(@eg; $action_extra $($prog_extra)*); )*
+                Self { eg, $($name),* }
+            }
+        }
+
+        $( $crate::theory!(@sort_define $sort_kind $Sort); )*
+        pub struct $Theory {
+            pub eg: $crate::EGraph,
+            $( pub $name: $crate::theory!(@field_ty $action $($prog)*), )*
+        }
+
+        impl std::ops::Deref for $Theory {
+            type Target = $crate::EGraph;
+            fn deref(&self) -> &Self::Target {
+                &self.eg
+            }
+        }
+        impl std::ops::DerefMut for $Theory {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.eg
+            }
+        }
     };
 
-    (@@ =) => {};
-    (@@ $action:ident) => {
-        #[cfg(false)] struct $action {} // syntax highlighting hack
+    // Initialize sorts
+    (@sort_define sort $Sort:ident) => {
+        pub struct $Sort;
+        impl $crate::EGraphValue for $Sort {
+            type Token = $crate::TokenOpaque<Self>;
+        }
     };
+    (@sort_define ty $Sort:ident) => {};
+    (@sort_init sort $eg:expr; $Sort:ident) => {};
+    (@sort_init ty $eg:expr; $Sort:ty) => {
+        $eg.add_primitive_type::<$Sort>();
+    };
+
+    // Field type dispatch
+    (@field_ty constructor ($($Args:ident)*) $Ret:ident) => {
+        $crate::Table<$crate::helper!(@triple ($($Args)*) ($Ret) True)>
+    };
+    (@field_ty function ($($Args:ident)*) $Ret:ident) => {
+        $crate::Table<$crate::helper!(@triple ($($Args)*) ($Ret) False)>
+    };
+    (@field_ty relation ($($Args:ident)*)) => {
+        $crate::Table<(
+            ($(<$Args as $crate::EGraphValue>::Token,)*),
+            dateg::TokenPrimitive<()>,
+            $crate::False,
+        )>
+    };
+    (@field_ty val ($Ty:ident) $val:tt) => {
+        $crate::helper!(@token $Ty)
+    };
+}
+
+#[macro_export]
+macro_rules! helper {
+    // Getting Token type
+    (@token $EGV:ident) => { <$EGV as $crate::EGraphValue>::Token };
+    (@triple ($($Args:ident)*) ($Ret:ty) $B:ident) => {
+        (
+            ($(<$Args as $crate::EGraphValue>::Token,)*),
+            <$Ret as $crate::EGraphValue>::Token,
+            $crate::$B,
+        )
+    };
+
+    // syntax highlighting hack
+    (@highlight_ty $action:tt) => { #[cfg(false)] struct $action {} };
+    // For whatever reason this does not work
+    (@highlight_fn $action:tt) => { #[cfg(false)] fn $action() {} };
 }

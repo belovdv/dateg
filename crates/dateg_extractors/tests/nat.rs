@@ -1,79 +1,68 @@
 #![allow(unused)]
 
-use dateg::{EGraph, Token, TokenOpaque, TokenPrimitive, execute};
+use dateg::{EGraph, Token, TokenOpaque, TokenPrimitive, execute, theory};
 
-pub struct Expr;
-pub struct ExprTuple;
-pub type TokenExpr = TokenOpaque<Expr>;
-pub type TokenExprTuple = TokenOpaque<ExprTuple>;
-pub type TokenString = TokenPrimitive<String>;
+theory!(Nat(
+    (sort Expr)
+    (sort ExprTuple)
+    (ty String)
+)(
+    (constructor inc (Expr) Expr)
+    (constructor mul (Expr Expr) Expr)
+    (constructor one () Expr)
+    (constructor add (Expr Expr) Expr)
+    (constructor square (Expr) Expr)
 
-pub fn eg() -> EGraph {
-    let mut eg = EGraph::default();
+    (constructor expr (String ExprTuple) Expr)
+    (constructor expr0 () ExprTuple)
+    (constructor expr1 (Expr) ExprTuple)
+    (constructor expr2 (Expr Expr) ExprTuple)
 
-    eg.add_primitive_type::<String>();
-    eg.add_primitive_type::<()>();
+    (relation is_comas (String))
 
-    let s_one = eg.add_primitive_value("one".to_string());
-    let s_inc = eg.add_primitive_value("inc".to_string());
-    let s_mul = eg.add_primitive_value("mul".to_string());
-    let s_add = eg.add_primitive_value("add".to_string());
-    let s_square = eg.add_primitive_value("square".to_string());
+    (val s_one (String) {"one".into()})
+    (val s_inc (String) {"inc".into()})
+    (val s_mul (String) {"mul".into()})
+    (val s_add (String) {"add".into()})
+    (val s_square (String) {"square".into()})
+)(
+    (insert (is_comas s_mul))
+    (insert (is_comas s_add))
 
-    execute! {eg;
-        (constructor inc (TokenExpr) TokenExpr)
-        (constructor mul (TokenExpr TokenExpr) TokenExpr)
-        (constructor one () TokenExpr)
-        (constructor add (TokenExpr TokenExpr) TokenExpr)
-        (constructor square (TokenExpr) TokenExpr)
+    (birewrite (one)        (expr {s_one} (expr0)))
+    (birewrite (inc x)      (expr {s_inc} (expr1 x)))
+    (birewrite (square x)   (expr {s_square} (expr1 x)))
+    (birewrite (mul x y)    (expr {s_mul} (expr2 x y)))
+    (birewrite (add x y)    (expr {s_add} (expr2 x y)))
 
-        (constructor expr (TokenString TokenExprTuple) TokenExpr)
-        (constructor expr0 () TokenExprTuple)
-        (constructor expr1 (TokenExpr) TokenExprTuple)
-        (constructor expr2 (TokenExpr TokenExpr) TokenExprTuple)
+    (rewrite
+        (expr name (expr2 x y))
+        (expr name (expr2 y x))
+        if (query u (is_comas name))
+    )
+    (birewrite
+        (expr name (expr2 x (expr name (expr2 y z))))
+        (expr name (expr2 (expr name (expr2 x y)) z))
+        if (query u (is_comas name))
+    )
 
-        (relation is_comas (TokenString))
-        (= () (is_comas s_mul))
-        (= () (is_comas s_add))
+    (birewrite (inc x) (add x (one)))
+    (rule
+        (query r (expr name args))
+        (set r (mul r (one)))
+    )
+    (birewrite (add (mul x y) y) (mul (inc x) y))
+    (birewrite (mul x x) (square x))
+));
 
-
-        (birewrite (one)        (expr {s_one} (expr0)))
-        (birewrite (inc x)      (expr {s_inc} (expr1 x)))
-        (birewrite (square x)   (expr {s_square} (expr1 x)))
-        (birewrite (mul x y)    (expr {s_mul} (expr2 x y)))
-        (birewrite (add x y)    (expr {s_add} (expr2 x y)))
-
-        (rewrite
-            (expr name (expr2 x y))
-            (expr name (expr2 y x))
-            if (query u (is_comas name))
-        )
-        (birewrite
-            (expr name (expr2 x (expr name (expr2 y z))))
-            (expr name (expr2 (expr name (expr2 x y)) z))
-            if (query u (is_comas name))
-        )
-
-        (birewrite (inc x) (add x (one)))
-        (rule
-            (query r (expr name args))
-            (set r (mul r (one)))
-        )
-        (birewrite (add (mul x y) y) (mul (inc x) y))
-        (birewrite (mul x x) (square x))
+impl Nat {
+    pub fn get_val(&mut self, val: usize) -> TokenOpaque<Expr> {
+        let one = self.one;
+        let inc = self.inc;
+        let mut expr = self.eg.row_get(one, ()).unwrap();
+        for _ in 1..val {
+            expr = self.eg.row_get(inc, (expr,)).unwrap();
+        }
+        expr.canon(&mut self.eg)
     }
-
-    eg
-}
-
-pub fn get_val(eg: &mut EGraph, val: usize) -> TokenExpr {
-    execute! {eg;
-        (get_constructor one () TokenExpr)
-        (get_constructor inc (TokenExpr) TokenExpr)
-    }
-    let mut expr = eg.row_get(one, ()).unwrap();
-    for _ in 1..val {
-        expr = eg.row_get(inc, (expr,)).unwrap();
-    }
-    expr.canon(eg)
 }

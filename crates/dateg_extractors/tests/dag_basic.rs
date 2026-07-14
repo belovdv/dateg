@@ -1,38 +1,36 @@
 mod nat;
 
-use dateg::execute;
+use dateg::{TokenOpaque, execute};
 use dateg_extractors::define_index;
 
-use crate::nat::{TokenExpr, get_val};
+use nat::*;
 
 #[test]
 fn dag_basic() {
-    let mut eg = nat::eg();
-    execute! {eg;
-        (get_constructor inc (TokenExpr) TokenExpr)
-        (get_constructor mul (TokenExpr TokenExpr) TokenExpr)
-        (get_constructor one () TokenExpr)
-        (get_constructor add (TokenExpr TokenExpr) TokenExpr)
-        (get_constructor square (TokenExpr) TokenExpr)
-
-        (= e1 (one))
-        (= e2 (inc e1))
-        (= e4 (square e2))
-        (= e16 (square e4))
+    let mut nat = Nat::default();
+    let inc = nat.inc;
+    let mul = nat.mul;
+    let one = nat.one;
+    let square = nat.square;
+    execute! {nat;
+        (add e1 (one))
+        (add e2 (inc e1))
+        (add e4 (square e2))
+        (add e16 (square e4))
     }
-    while eg.run_ruleset("") {}
+    while nat.run_ruleset("") {}
 
     define_index!(Index
-        (datatype TokenExpr -> Expr
+        (datatype Expr -> EExpr
             One ()
-            Inc (TokenExpr)
-            Mul (TokenExpr TokenExpr)
+            Inc (Expr)
+            Mul (Expr Expr)
         )
     );
-    let mut extractor = Index::extractor_dag_basic(&eg, (one, inc, mul));
+    let mut extractor = Index::extractor_dag_basic(&nat, (one, inc, mul));
 
-    let e4 = get_val(&mut eg, 4);
-    let e13 = get_val(&mut eg, 13);
+    let e4 = nat.get_val(4);
+    let e13 = nat.get_val(13);
     for (e, expected) in [
         (e4, &["(mul (inc (one)) (inc (one)))"][..]),
         (
@@ -57,11 +55,11 @@ fn dag_basic() {
     }
 
     impl Index {
-        fn expr_to_string(&self, expr: TokenExpr) -> String {
-            match self.expr[&expr].1[0] {
-                Expr::One(()) => format!("(one)"),
-                Expr::Inc((a,)) => format!("(inc {})", self.expr_to_string(a)),
-                Expr::Mul((a, b)) => {
+        fn expr_to_string(&self, expr: TokenOpaque<Expr>) -> String {
+            match self.e_expr[&expr].1[0] {
+                EExpr::One(()) => format!("(one)"),
+                EExpr::Inc((a,)) => format!("(inc {})", self.expr_to_string(a)),
+                EExpr::Mul((a, b)) => {
                     let mut a = self.expr_to_string(a);
                     let mut b = self.expr_to_string(b);
                     // To simplify testing

@@ -1,46 +1,59 @@
 use ahash::AHashSet;
-use dateg::{EGraph, TokenOpaque, TokenPrimitive, execute, rule};
+use dateg::{EGraph, execute, rule, theory};
 
-struct Expr;
-type TokenExpr = TokenOpaque<Expr>;
-type TokenUsize = TokenPrimitive<usize>;
-type TokenString = TokenPrimitive<String>;
+theory!(Arithmetic(
+    (sort Expr)
+    (ty usize)
+    (ty String)
+)(
+    (constructor table_add (Expr Expr) Expr)
+    (constructor table_sub (Expr Expr) Expr)
+    (constructor table_mul (Expr Expr) Expr)
+    (constructor table_const (usize) Expr)
+    (constructor table_var (String) Expr)
+    (function universe (String) Expr)
+
+    (val v0 (usize) {0})
+    (val v1 (usize) {1})
+    (val v5 (usize) {5})
+    (val sa (String) {"a".into()})
+    (val sb (String) {"b".into()})
+    (val sc (String) {"c".into()})
+)(
+));
 
 #[test]
 fn add_and_get_values() {
-    let mut eg = EGraph::default();
-
-    eg.add_primitive_type::<usize>();
-    eg.add_primitive_type::<String>();
-
-    let v1 = eg.add_primitive_value::<usize>(1);
-    let v5 = eg.add_primitive_value::<usize>(5);
-    let sa = eg.add_primitive_value("a".to_string());
-    let sb = eg.add_primitive_value("b".to_string());
+    let Arithmetic {
+        mut eg,
+        table_add,
+        table_mul,
+        table_const,
+        table_var,
+        v1,
+        v5,
+        sa,
+        sb,
+        ..
+    } = Arithmetic::default();
 
     execute! {eg;
-        (constructor table_add (TokenExpr TokenExpr) TokenExpr)
-        (constructor table_mul (TokenExpr TokenExpr) TokenExpr)
-        (constructor table_const (TokenUsize) TokenExpr)
-        (constructor table_var (TokenString) TokenExpr)
-        (function _universe (TokenString) TokenExpr)
+        (add c1 (table_const v1))
+        (add _c5 (table_const v5))
+        (add va (table_var sa))
+        (add vb (table_var sb))
 
-        (= c1 (table_const v1))
-        (= _c5 (table_const v5))
-        (= va (table_var sa))
-        (= vb (table_var sb))
-
-        (= e_add_a_b (table_add va vb))
-        (= e_add_b_1 (table_add vb c1))
-        (= e_add_a_add_b_1 (table_add va e_add_b_1))
-        (= _e_mul_a_1 (table_mul va c1))
+        (add e_add_a_b (table_add va vb))
+        (add e_add_b_1 (table_add vb c1))
+        (add e_add_a_add_b_1 (table_add va e_add_b_1))
+        (add _e_mul_a_1 (table_mul va c1))
     }
 
     execute! {eg;
-        (= e_sq_sum_a_b (table_mul e_add_a_b e_add_a_b))
+        (add e_sq_sum_a_b (table_mul e_add_a_b e_add_a_b))
 
         // Error: expected (..., ...), found (..., ..., ...)
-        // (= e_mul (table_mul va c1 vb))
+        // (add e_mul (table_mul va c1 vb))
     }
 
     let e_sq_sum_a_b_ = eg.row_add(table_mul, (e_add_a_b, e_add_a_b));
@@ -68,27 +81,25 @@ fn add_and_get_values() {
 
 #[test]
 fn rule_builder() {
-    let mut eg = EGraph::default();
-
-    eg.add_primitive_type::<String>();
-
-    let sa = eg.add_primitive_value("a".to_string());
-    let sb = eg.add_primitive_value("b".to_string());
-    let sc = eg.add_primitive_value("c".to_string());
-
+    let Arithmetic {
+        mut eg,
+        table_add,
+        table_sub,
+        table_var,
+        sa,
+        sb,
+        sc,
+        ..
+    } = Arithmetic::default();
     execute! {eg;
-        (constructor table_add (TokenExpr TokenExpr) TokenExpr)
-        (constructor table_sub (TokenExpr TokenExpr) TokenExpr)
-        (constructor table_var (TokenString) TokenExpr)
+        (add va (table_var sa))
+        (add vb (table_var sb))
+        (add vc (table_var sc))
 
-        (= va (table_var sa))
-        (= vb (table_var sb))
-        (= vc (table_var sc))
-
-        (= ab (table_add va vb))
-        (= cb (table_sub vc vb))
-        (= ab_cb (table_add ab cb)) // (a + b) + (c - b)
-        (= ac (table_add va vc))    // (a + c)
+        (add ab (table_add va vb))
+        (add cb (table_sub vc vb))
+        (add ab_cb (table_add ab cb)) // (a + b) + (c - b)
+        (add ac (table_add va vc))    // (a + c)
     }
     assert!(ab_cb.canon(&eg) != ac.canon(&eg));
 
@@ -114,22 +125,20 @@ fn rule_builder() {
 
 #[test]
 fn rule_builder_external_value() {
-    let mut eg = EGraph::default();
-
-    eg.add_primitive_type::<String>();
-    eg.add_primitive_type::<usize>();
-
-    let v0 = eg.add_primitive_value(0usize);
-    let sa = eg.add_primitive_value("a".to_string());
+    let Arithmetic {
+        mut eg,
+        table_sub,
+        table_var,
+        table_const,
+        v0,
+        sa,
+        ..
+    } = Arithmetic::default();
 
     execute! {eg;
-        (constructor table_sub (TokenExpr TokenExpr) TokenExpr)
-        (constructor table_const (TokenUsize) TokenExpr)
-        (constructor table_var (TokenString) TokenExpr)
-
-        (= c0 (table_const v0))
-        (= va (table_var sa))
-        (= vaa (table_sub va va))
+        (add c0 (table_const v0))
+        (add va (table_var sa))
+        (add vaa (table_sub va va))
 
         // x - x -> 0
         (rule
@@ -155,14 +164,14 @@ fn rewrite_helpers() {
     let sb = eg.add_primitive_value("b".to_string());
 
     execute! {eg;
-        (constructor table_add (TokenExpr TokenExpr) TokenExpr)
-        (constructor table_sub (TokenExpr TokenExpr) TokenExpr)
-        (constructor table_var (TokenString) TokenExpr)
-        (constructor table_const (TokenUsize) TokenExpr)
+        (constructor table_add (Expr Expr) Expr)
+        (constructor table_sub (Expr Expr) Expr)
+        (constructor table_var (String) Expr)
+        (constructor table_const (usize) Expr)
 
-        (= c0 (table_const v0))
-        (= a (table_var sa))
-        (= b (table_var sb))
+        (add c0 (table_const v0))
+        (add a (table_var sa))
+        (add b (table_var sb))
 
         // ruleset by default: ""
         (rewrite (table_sub x x) {c0})
@@ -174,9 +183,9 @@ fn rewrite_helpers() {
             (table_add (table_add x y) z)
         )
 
-        (= ab (table_add a b))
-        (= ab_b (table_add ab b))
-        (= b_ab (table_add b ab))
+        (add ab (table_add a b))
+        (add ab_b (table_add ab b))
+        (add b_ab (table_add b ab))
 
         (run_ruleset "")
     }

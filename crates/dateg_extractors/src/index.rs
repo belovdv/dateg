@@ -66,11 +66,11 @@ macro_rules! define_index {
     )*) => { paste::paste! {
         #[derive(Default)]
         pub struct $Index {$(
-            pub [< $Sort:snake >]: $crate::AHashMap<$Token, (usize, Vec<$Sort>)>,
+            pub [< $Sort:snake >]: $crate::AHashMap<<$Token as dateg::EGraphValue>::Token, (usize, Vec<$Sort>)>,
         )*}
         impl $Index {
             pub fn extractor_tree_basic<
-                $($( [< $Constructor Schema >]: dateg::Schema<Inputs = ($($Args,)*), Output = $Token>, )*)*
+                $($( [< $Constructor Schema >]: dateg::Schema<Inputs = ($(<$Args as dateg::EGraphValue>::Token,)*), Output = <$Token as dateg::EGraphValue>::Token>, )*)*
             >(eg: &dateg::EGraph $(,
                 ($([< $Constructor:snake >]),*):
                 ($(dateg::Table<[< $Constructor Schema >]>),*)
@@ -82,7 +82,7 @@ macro_rules! define_index {
                 extractor.extract(eg)
             }
             pub fn extractor_dag_basic<
-                $($( [< $Constructor Schema >]: dateg::Schema<Inputs = ($($Args,)*), Output = $Token>, )*)*
+                $($( [< $Constructor Schema >]: dateg::Schema<Inputs = ($(<$Args as dateg::EGraphValue>::Token,)*), Output = <$Token as dateg::EGraphValue>::Token>, )*)*
             >(eg: &dateg::EGraph $(,
                 ($([< $Constructor:snake >]),*):
                 ($(dateg::Table<[< $Constructor Schema >]>),*)
@@ -98,26 +98,26 @@ macro_rules! define_index {
         $(
             #[derive(Clone, Copy, PartialEq, Eq)]
             pub enum $Sort {$(
-                $Constructor(($($Args,)*)),
+                $Constructor(($(<$Args as dateg::EGraphValue>::Token,)*)),
             )*}
-            impl $crate::IndexFor<$Token> for $Index {
+            impl $crate::IndexFor<<$Token as dateg::EGraphValue>::Token> for $Index {
                 type Sort = $Sort;
-                fn get_map(&self) -> &$crate::AHashMap<$Token, (usize, Vec<Self::Sort>)> {
+                fn get_map(&self) -> &$crate::AHashMap<<$Token as dateg::EGraphValue>::Token, (usize, Vec<Self::Sort>)> {
                     &self.[< $Sort:snake >]
                 }
-                fn get_map_mut(&mut self) -> &mut $crate::AHashMap<$Token, (usize, Vec<Self::Sort>)> {
+                fn get_map_mut(&mut self) -> &mut $crate::AHashMap<<$Token as dateg::EGraphValue>::Token, (usize, Vec<Self::Sort>)> {
                     &mut self.[< $Sort:snake >]
                 }
             }
             $(
                 #[derive(Clone, Copy)]
-                pub struct $Constructor(($($Args,)*));
+                pub struct $Constructor(($(<$Args as dateg::EGraphValue>::Token,)*));
                 impl $crate::Constructor for $Constructor {
-                    type Inputs = ($($Args,)*);
-                    fn into_inner(self) -> ($($Args,)*) {
+                    type Inputs = ($(<$Args as dateg::EGraphValue>::Token,)*);
+                    fn into_inner(self) -> ($(<$Args as dateg::EGraphValue>::Token,)*) {
                         self.0
                     }
-                    type Output = $Token;
+                    type Output = <$Token as dateg::EGraphValue>::Token;
                     type Sort = $Sort;
                     fn into_variant(inputs: Self::Inputs) -> Self::Sort {
                         $Sort::$Constructor(inputs)

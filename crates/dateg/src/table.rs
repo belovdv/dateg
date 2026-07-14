@@ -57,7 +57,7 @@ impl EGraph {
     pub fn new_table_relation<Inputs: TokenTuple>(
         &mut self,
         name: impl ToString,
-    ) -> Table<(Inputs, TokenPrimitive<()>, True)> {
+    ) -> Table<(Inputs, TokenPrimitive<()>, False)> {
         let v0 = DefaultVal::Const(Value::new_const(0));
         self.new_table(name, v0, MergeFn::AssertEq)
     }

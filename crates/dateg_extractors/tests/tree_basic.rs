@@ -1,56 +1,54 @@
 mod nat;
 
+use dateg::{EGraph, TokenOpaque, execute};
 use dateg_extractors::{IndexFor, define_index};
-use dateg::{EGraph, execute};
 
-use crate::nat::{TokenExpr, TokenExprTuple, TokenString, get_val};
+use nat::*;
 
 #[test]
 fn concrete() {
-    let mut eg = nat::eg();
-    execute! {eg;
-        (get_constructor inc (TokenExpr) TokenExpr)
-        (get_constructor mul (TokenExpr TokenExpr) TokenExpr)
-        (get_constructor one () TokenExpr)
-        (get_constructor add (TokenExpr TokenExpr) TokenExpr)
-        (get_constructor square (TokenExpr) TokenExpr)
-
-        (= e1 (one))
-        (= e2 (inc e1))
-        (= e4 (square e2))
-        (= e16 (square e4))
+    let mut nat = Nat::default();
+    let inc = nat.inc;
+    let mul = nat.mul;
+    let one = nat.one;
+    let square = nat.square;
+    execute! {nat;
+        (add e1 (one))
+        (add e2 (inc e1))
+        (add e4 (square e2))
+        (add e16 (square e4))
     }
-    while eg.run_ruleset("") {}
+    while nat.run_ruleset("") {}
 
     define_index!(Index
-        (datatype TokenExpr -> Expr
+        (datatype Expr -> EExpr
             One ()
-            Inc (TokenExpr)
-            Mul (TokenExpr TokenExpr)
+            Inc (Expr)
+            Mul (Expr Expr)
         )
     );
-    let index = Index::extractor_tree_basic(&eg, (one, inc, mul));
+    let index = Index::extractor_tree_basic(&nat, (one, inc, mul));
 
-    fn eval(eg: &EGraph, index: &Index, expr: TokenExpr) -> usize {
-        match index.value(expr.canon(eg)) {
-            Expr::One(()) => 1,
-            Expr::Inc((e,)) => eval(eg, index, e) + 1,
-            Expr::Mul((a, b)) => eval(eg, index, a) * eval(eg, index, b),
+    fn eval(nat: &EGraph, index: &Index, expr: TokenOpaque<Expr>) -> usize {
+        match index.value(expr.canon(nat)) {
+            EExpr::One(()) => 1,
+            EExpr::Inc((e,)) => eval(nat, index, e) + 1,
+            EExpr::Mul((a, b)) => eval(nat, index, a) * eval(nat, index, b),
         }
     }
-    fn expr_to_strings(eg: &EGraph, index: &Index, expr: TokenExpr) -> Vec<String> {
+    fn expr_to_strings(nat: &EGraph, index: &Index, expr: TokenOpaque<Expr>) -> Vec<String> {
         let mut r = vec![];
-        for option in index.get_full(expr.canon(eg)).unwrap().1.iter() {
+        for option in index.get_full(expr.canon(nat)).unwrap().1.iter() {
             match option {
-                Expr::One(()) => r.push(format!("o")),
-                Expr::Inc((e,)) => {
-                    for e in expr_to_strings(eg, index, *e) {
+                EExpr::One(()) => r.push(format!("o")),
+                EExpr::Inc((e,)) => {
+                    for e in expr_to_strings(nat, index, *e) {
                         r.push(format!("i{e}"));
                     }
                 }
-                Expr::Mul((a, b)) => {
-                    for a in expr_to_strings(eg, index, *a) {
-                        for b in expr_to_strings(eg, index, *b) {
+                EExpr::Mul((a, b)) => {
+                    for a in expr_to_strings(nat, index, *a) {
+                        for b in expr_to_strings(nat, index, *b) {
                             r.push(format!("m{a}{b}"));
                         }
                     }
@@ -76,49 +74,49 @@ fn concrete() {
         &["miiioiio", "miioiiio"],
         &["imiiioiio", "imiioiiio"],
     ];
-    let mut expr = eg.row_get(one, ()).unwrap();
+    let mut expr = nat.row_get(one, ()).unwrap();
     for value in 1..=13 {
-        assert_eq!(value, eval(&eg, &index, expr));
-        let (cost, _) = index.get_full(expr.canon(&eg)).unwrap();
-        let mut options = expr_to_strings(&eg, &index, expr);
+        assert_eq!(value, eval(&nat, &index, expr));
+        let (cost, _) = index.get_full(expr.canon(&nat)).unwrap();
+        let mut options = expr_to_strings(&nat, &index, expr);
         for option in options.iter() {
             assert_eq!(option.len(), *cost);
         }
         options.sort();
         let options: Vec<_> = options.iter().map(|s| s.as_str()).collect();
         assert_eq!(options, results[value]);
-        expr = eg.row_get(inc, (expr,)).unwrap();
+        expr = nat.row_get(inc, (expr,)).unwrap();
     }
 
     define_index!(IndexFullC1
-        (datatype TokenExpr -> IFExprC1
+        (datatype Expr -> IFExprC1
             IFC1One ()
-            IFC1Inc (TokenExpr)
-            IFC1Mul (TokenExpr TokenExpr)
-            IFC1Square (TokenExpr)
+            IFC1Inc (Expr)
+            IFC1Mul (Expr Expr)
+            IFC1Square (Expr)
         )
     );
-    let index_full_c1 = IndexFullC1::extractor_tree_basic(&eg, (one, inc, mul, square));
+    let index_full_c1 = IndexFullC1::extractor_tree_basic(&nat, (one, inc, mul, square));
     define_index!(IndexFullC2
-        (datatype TokenExpr -> IFExprC2
+        (datatype Expr -> IFExprC2
             IFC2One ()
-            IFC2Inc (TokenExpr)
-            IFC2Mul (TokenExpr TokenExpr)
-            IFC2Square (TokenExpr) :cost 2
+            IFC2Inc (Expr)
+            IFC2Mul (Expr Expr)
+            IFC2Square (Expr) :cost 2
         )
     );
-    let index_full_c2 = IndexFullC2::extractor_tree_basic(&eg, (one, inc, mul, square));
+    let index_full_c2 = IndexFullC2::extractor_tree_basic(&nat, (one, inc, mul, square));
     define_index!(IndexFullC3
-        (datatype TokenExpr -> IFC3Expr
+        (datatype Expr -> IFC3Expr
             IFC3One ()
-            IFC3Inc (TokenExpr)
-            IFC3Mul (TokenExpr TokenExpr)
-            IFC3Square (TokenExpr) :cost 3
+            IFC3Inc (Expr)
+            IFC3Mul (Expr Expr)
+            IFC3Square (Expr) :cost 3
         )
     );
-    let index_full_c3 = IndexFullC3::extractor_tree_basic(&eg, (one, inc, mul, square));
+    let index_full_c3 = IndexFullC3::extractor_tree_basic(&nat, (one, inc, mul, square));
 
-    let e4 = get_val(&mut eg, 4);
+    let e4 = nat.get_val(4);
     // square is not used, there is no such thing
     assert_eq!(index.get_full(e4).unwrap().1.len(), 1);
     assert_eq!(index.get_full(e4).unwrap().0, 4);
@@ -135,51 +133,49 @@ fn concrete() {
 
 #[test]
 fn generic() {
-    let mut eg = nat::eg();
-    execute! {eg;
-        (get_constructor expr (TokenString TokenExprTuple) TokenExpr)
-        (get_constructor expr0 () TokenExprTuple)
-        (get_constructor expr1 (TokenExpr) TokenExprTuple)
-        (get_constructor expr2 (TokenExpr TokenExpr) TokenExprTuple)
-
-        (get_constructor one () TokenExpr)
-        (get_constructor inc (TokenExpr) TokenExpr)
-        (get_constructor mul (TokenExpr TokenExpr) TokenExpr)
-
-        (= e1 (one))
-        (= e2 (inc e1))
-        (= e4 (mul e2 e2))
-        (= e16 (mul e4 e4))
+    let mut nat = Nat::default();
+    let inc = nat.inc;
+    let mul = nat.mul;
+    let one = nat.one;
+    let expr = nat.expr;
+    let expr0 = nat.expr0;
+    let expr1 = nat.expr1;
+    let expr2 = nat.expr2;
+    execute! {nat;
+        (add e1 (one))
+        (add e2 (inc e1))
+        (add e4 (mul e2 e2))
+        (add e16 (mul e4 e4))
     }
-    while eg.run_ruleset("") {}
+    while nat.run_ruleset("") {}
 
     define_index!(Index
-        (datatype TokenExpr -> Expr
-            ExprAny (TokenString TokenExprTuple)
+        (datatype Expr -> EExpr
+            ExprAny (String ExprTuple)
         )
-        (datatype TokenExprTuple -> ExprTuple
+        (datatype ExprTuple -> EExprTuple
             Expr0 ()
-            Expr1 (TokenExpr)
-            Expr2 (TokenExpr TokenExpr)
+            Expr1 (Expr)
+            Expr2 (Expr Expr)
         )
     );
 
-    let index = Index::extractor_tree_basic(&eg, expr, (expr0, expr1, expr2));
+    let index = Index::extractor_tree_basic(&nat, expr, (expr0, expr1, expr2));
 
     impl Index {
-        fn expr_to_string(&self, eg: &EGraph, expr: TokenExpr) -> String {
+        fn expr_to_string(&self, nat: &EGraph, expr: TokenOpaque<Expr>) -> String {
             match self.value(expr) {
-                Expr::ExprAny((op, args)) => match self.value(args) {
-                    ExprTuple::Expr0(()) => format!("({})", op.get(eg)),
-                    ExprTuple::Expr1((a,)) => {
-                        format!("({} {})", op.get(eg), self.expr_to_string(eg, a))
+                EExpr::ExprAny((op, args)) => match self.value(args) {
+                    EExprTuple::Expr0(()) => format!("({})", op.get(nat)),
+                    EExprTuple::Expr1((a,)) => {
+                        format!("({} {})", op.get(nat), self.expr_to_string(nat, a))
                     }
-                    ExprTuple::Expr2((a, b)) => {
+                    EExprTuple::Expr2((a, b)) => {
                         format!(
                             "({} {} {})",
-                            op.get(eg),
-                            self.expr_to_string(eg, a),
-                            self.expr_to_string(eg, b),
+                            op.get(nat),
+                            self.expr_to_string(nat, a),
+                            self.expr_to_string(nat, b),
                         )
                     }
                 },
@@ -187,7 +183,7 @@ fn generic() {
         }
     }
 
-    let e15 = get_val(&mut eg, 15);
-    let r = index.expr_to_string(&eg, e15);
+    let e15 = nat.get_val(15);
+    let r = index.expr_to_string(&nat, e15);
     assert_eq!(r, "(mul (inc (square (inc (one)))) (inc (inc (one))))");
 }
