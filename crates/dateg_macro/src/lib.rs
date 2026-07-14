@@ -153,6 +153,9 @@ impl Emitter {
             Kind::Add => {
                 self.emit(quote! { let #bind = dateg::Entry::Var(#rb.#action(#f, #args_tuple)); })
             }
+            Kind::Call => {
+                self.emit(quote! { let #bind = dateg::Entry::Var(#rb.#action(#f, #args_tuple)); })
+            }
             _ => self.emit(quote! { #rb.#action(#f, #args_tuple, #bind); }),
         }
         Ok(())
@@ -202,6 +205,7 @@ enum Kind {
     Query,
     Add,
     Set,
+    Call,
 }
 impl Kind {
     fn from_str(s: &str) -> Option<Self> {
@@ -209,6 +213,7 @@ impl Kind {
             "query" => Self::Query,
             "add" => Self::Add,
             "set" => Self::Set,
+            "call" => Self::Call,
             _ => return None,
         })
     }
@@ -217,6 +222,7 @@ impl Kind {
             Self::Query => "query",
             Self::Add => "add",
             Self::Set => "set",
+            Self::Call => "call",
         }
     }
     fn args_handling(self) -> Self {

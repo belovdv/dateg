@@ -24,6 +24,21 @@ macro_rules! execute {
             $(, $crate::helper!(@token $Ret))?
         >(stringify!($table));
     };
+    // Evaluation
+    (@$eg:expr; evaluation $func:ident ($($Args:ident)*) $Ret:tt {$eval:expr}) => {
+        #[cfg(false)] fn $func() {};
+        let $func = $eg.new_function::<
+            ($($crate::helper!(@token $Args),)*),
+            $crate::helper!(@token $Ret)
+        >($eval);
+    };
+    (@$eg:expr; evaluation_partial $func:ident ($($Args:ident)*) $Ret:tt {$eval:expr}) => {
+        #[cfg(false)] fn $func() {};
+        let $func = $eg.new_function_partial::<
+            ($($crate::helper!(@token $Args),)*),
+            $crate::helper!(@token $Ret)
+        >($eval);
+    };
 
     // Values
     (@$eg:expr; val $name:ident ($T:ident) {$val:expr}) => {
@@ -76,6 +91,7 @@ macro_rules! theory {
         ($(($sort_kind:ident $Sort:ident))*)
         ($(($action:tt $name:tt $($prog:tt)*))*)
         ($(($action_extra:tt $($prog_extra:tt)*))*)
+        $({$($post_init:tt)*})?
     ) => {
         $( $crate::helper!(@highlight_ty $action); )*
         $( $crate::helper!(@highlight_ty $action_extra); )*
@@ -87,6 +103,8 @@ macro_rules! theory {
                 $( $crate::theory!(@sort_init $sort_kind eg; $Sort); )*
                 $( $crate::execute!(@eg; $action $name $($prog)*); )*
                 $( $crate::execute!(@eg; $action_extra $($prog_extra)*); )*
+                eg.set_ruleset_active("");
+                $( {$($post_init)*} )?
                 Self { eg, $($name),* }
             }
         }
@@ -137,6 +155,12 @@ macro_rules! theory {
             $crate::False,
         )>
     };
+    (@field_ty evaluation ($($Args:ident)*) $Ret:tt {$($tt:tt)*}) => {
+        $crate::Function<$crate::helper!(@triple ($($Args)*) ($Ret) True)>
+    };
+    (@field_ty evaluation_partial ($($Args:ident)*) $Ret:tt {$($tt:tt)*}) => {
+        $crate::Function<$crate::helper!(@triple ($($Args)*) ($Ret) True)>
+    };
     (@field_ty val ($Ty:ident) $val:tt) => {
         $crate::helper!(@token $Ty)
     };
@@ -145,7 +169,7 @@ macro_rules! theory {
 #[macro_export]
 macro_rules! helper {
     // Getting Token type
-    (@token $EGV:ident) => { <$EGV as $crate::EGraphValue>::Token };
+    (@token $EGV:tt) => { <$EGV as $crate::EGraphValue>::Token };
     (@triple ($($Args:ident)*) ($Ret:ty) $B:ident) => {
         (
             ($(<$Args as $crate::EGraphValue>::Token,)*),

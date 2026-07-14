@@ -1,5 +1,5 @@
 use ahash::AHashSet;
-use dateg::{EGraph, execute, rule, theory};
+use dateg::{execute, rule, theory};
 
 theory!(Arithmetic(
     (sort Expr)
@@ -19,7 +19,11 @@ theory!(Arithmetic(
     (val sa (String) {"a".into()})
     (val sb (String) {"b".into()})
     (val sc (String) {"c".into()})
+
+    (evaluation eval_add (usize usize) usize { |(a, b)| a + b })
 )(
+    (set_ruleset_active "eval")
+    (rewrite (table_add (table_const a) (table_const b)) (table_const (eval_add b a)))
 ));
 
 #[test]
@@ -154,21 +158,19 @@ fn rule_builder_external_value() {
 
 #[test]
 fn rewrite_helpers() {
-    let mut eg = EGraph::default();
-
-    eg.add_primitive_type::<String>();
-    eg.add_primitive_type::<usize>();
-
-    let v0 = eg.add_primitive_value(0usize);
-    let sa = eg.add_primitive_value("a".to_string());
-    let sb = eg.add_primitive_value("b".to_string());
+    let Arithmetic {
+        mut eg,
+        table_sub,
+        table_add,
+        table_var,
+        table_const,
+        v0,
+        sa,
+        sb,
+        ..
+    } = Arithmetic::default();
 
     execute! {eg;
-        (constructor table_add (Expr Expr) Expr)
-        (constructor table_sub (Expr Expr) Expr)
-        (constructor table_var (String) Expr)
-        (constructor table_const (usize) Expr)
-
         (add c0 (table_const v0))
         (add a (table_var sa))
         (add b (table_var sb))
@@ -193,4 +195,74 @@ fn rewrite_helpers() {
     assert!(ab_b.canon(&eg) != b_ab.canon(&eg));
     eg.run_ruleset_active();
     assert!(ab_b.canon(&eg) == b_ab.canon(&eg));
+}
+
+#[test]
+fn evaluation() {
+    let mut ar = Arithmetic::default();
+    let table_const = ar.table_const;
+    let table_add = ar.table_add;
+    let eval_add = ar.eval_add;
+    let v0 = ar.v0;
+    let v1 = ar.v1;
+    let v5 = ar.v5;
+    execute! {ar;
+        (add c0 (table_const v0))
+        (add c1 (table_const v1))
+        (add c5 (table_const v5))
+
+        (add c2 (table_add c1 c1))
+        (add c3 (table_add c2 c1))
+        (add c4 (table_add c3 c1))
+        (add c5_ (table_add c4 c1))
+    }
+
+    assert!(c5.canon(&ar) != c5_.canon(&ar));
+    while ar.run_ruleset("eval") {}
+    assert!(c5.canon(&ar) == c5_.canon(&ar));
+
+    execute! {ar;
+        (add c6 (table_add c5 c1))
+        // Adds c6 to table_const
+        (run_ruleset "eval")
+
+        (evaluation eval_mul (usize usize) usize { |(a, b)| a * b })
+        (evaluation_partial not_is_one (usize) () { |(a,)| (a != 1).then(|| ()) })
+        (evaluation print (usize usize usize) () { |(ab, a, b,)| println!("{ab} = {a} * {b}") })
+
+        (relation is_divisible (Expr))
+        (relation is_divisor (Expr))
+
+        (set_ruleset_active "populate_divisible")
+    }
+    rule!(ar;
+        // Function call args have to be bound
+        (query ca (table_const a))
+        (query cb (table_const b))
+        // This is necessary to avoid generation of new values
+        (query cab (table_const ab))
+
+        // Result of function can be unbound
+        (query aa (eval_add a {v0}))
+
+        // The main part of query lhs: `\exists a,b,ab \in universe: ab = a * b`
+        (query ab (eval_mul a b))
+
+        // Ensure we get natural divisors
+        (query unit (not_is_one a))
+        (query unit (not_is_one b))
+
+        // Mark `ab` as divisible
+        (set unit (is_divisible (table_const ab)))
+
+        // Demonstration of `call` usage
+        (call _r (print ab a b))
+        // Note, that calling `print` in `query` is also possible.
+        // Code: `(query _r (print ab a b))`
+    );
+    assert!(ar.row_get(is_divisible, (c6,)).is_none());
+    while ar.run_ruleset_active() {}
+    assert!(ar.row_get(is_divisible, (c6,)).is_some());
+
+    // panic!("GOOD")
 }

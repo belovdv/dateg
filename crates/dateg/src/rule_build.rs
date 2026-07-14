@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use ahash::AHashSet;
 use egglog_bridge::{QueryEntry, RuleId};
 
 use crate::*;
@@ -9,6 +10,7 @@ impl EGraph {
         RuleBuilder {
             inner: self.inner.new_rule(name.unwrap_or(""), true),
             vars: vec![],
+            grounded: Default::default(),
         }
     }
 }
@@ -16,6 +18,7 @@ impl EGraph {
 pub struct RuleBuilder<'a> {
     inner: egglog_bridge::RuleBuilder<'a>,
     vars: Vec<QueryEntry>,
+    grounded: AHashSet<QueryEntry>,
 }
 
 #[derive(Clone, Copy)]
@@ -54,7 +57,7 @@ impl<'a> RuleBuilder<'a> {
         self._add_var(var)
     }
 
-    /// LHS: query table
+    /// LHS: query table (or function)
     pub fn query<S: Schema>(
         &mut self,
         q: impl LhsQuery<S>,
@@ -65,7 +68,7 @@ impl<'a> RuleBuilder<'a> {
         entries.push(output.into_entry(self));
         q.query(&entries, self);
     }
-    /// RHS: use constructor
+    /// RHS: use constructor (or evaluate function)
     pub fn add<S: Schema<AllowAdd = True>>(
         &mut self,
         table: impl RhsAdd<S>,
@@ -92,6 +95,22 @@ impl<'a> RuleBuilder<'a> {
         let b = b.into_entry(self);
         self.inner.union(a, b);
     }
+    /// RHS: Call unit function (intended for debugging)
+    pub fn call<S: Schema<Output = TokenPrimitive<()>>>(
+        &mut self,
+        func: Function<S>,
+        inputs: <S::Inputs as TokenTuple>::Entries,
+    ) -> Var<S::Output> {
+        let entries = inputs.into_entries(self);
+        let column_ty = S::Output::column_ty(self.inner.egraph());
+        let var = QueryEntry::Var(self.inner.call_external_func(
+            func.into_egglog(),
+            &entries,
+            column_ty,
+            || "".to_string(),
+        ));
+        self._add_var(var)
+    }
 
     pub fn build(self) -> RuleId {
         self.inner.build()
@@ -103,6 +122,7 @@ pub trait LhsQuery<S: Schema> {
 }
 impl<S: Schema> LhsQuery<S> for Table<S> {
     fn query(&self, entries: &[QueryEntry], rb: &mut RuleBuilder) {
+        rb.grounded.extend(entries.iter().cloned());
         rb.inner
             .query_table(self.into_egglog(), entries, None)
             .unwrap();
@@ -110,6 +130,15 @@ impl<S: Schema> LhsQuery<S> for Table<S> {
 }
 impl<S: Schema> LhsQuery<S> for Function<S> {
     fn query(&self, entries: &[QueryEntry], rb: &mut RuleBuilder) {
+        for entry in entries.iter().take(entries.len() - 1) {
+            if matches!(entry, QueryEntry::Var(_)) {
+                assert!(
+                    rb.grounded.contains(entry),
+                    "variable `{entry:?}` used in function call should be bound by table query"
+                );
+            }
+        }
+        rb.grounded.insert(entries.last().unwrap().clone());
         let column_ty = S::Output::column_ty(rb.inner.egraph());
         rb.inner
             .query_prim(self.into_egglog(), entries, column_ty)

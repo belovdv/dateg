@@ -85,6 +85,15 @@ macro_rules! impl_tt {
                 vec![$($T.into_entry(rb)),*]
             }
         }
+        #[allow(unused)]
+        impl<$($T: BaseValue),*> TokenTuplePrimitive for ($(TokenPrimitive<$T>,)*) {
+            type Inner = ($($T,)*);
+            fn into_values(self, es: &ExecutionState) -> Self::Inner {
+                #[allow(non_snake_case)]
+                let ($($T,)*) = self;
+                ($(es.base_values().unwrap::<$T>($T.into_egglog()),)*)
+            }
+        }
     };
 }
 impl_tt!(A B C D E F G H I J K L);
