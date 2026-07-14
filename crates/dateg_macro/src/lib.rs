@@ -38,6 +38,21 @@ pub fn rule(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     .into()
 }
 
+// Utils
+
+macro_rules! err {
+    ($span:expr, $msg:literal $($extra:tt)*) => {
+        Err(syn::Error::new($span, format!($msg $($extra)*)).into_compile_error())
+    };
+}
+macro_rules! ensure {
+    ($cond:expr, $span:expr, $msg:literal $($extra:tt)*) => {
+        if !$cond {
+            return err!($span, $msg $($extra)*);
+        }
+    };
+}
+
 // Input
 
 struct RuleInput {
@@ -46,10 +61,10 @@ struct RuleInput {
 }
 struct Action {
     action: Ident,
-    lhs: SExpr,
-    rhs: SExpr,
+    args: Vec<SExpr>,
 }
 enum SExpr {
+    Implicit(Span),
     Leaf(Ident),
     Custom(Expr),
     Nested(Ident, Vec<Self>),
@@ -71,9 +86,11 @@ impl Parse for Action {
         let content;
         syn::parenthesized!(content in input);
         let action = content.parse()?;
-        let lhs = content.parse()?;
-        let rhs = content.parse()?;
-        Ok(Action { action, lhs, rhs })
+        let mut args = vec![];
+        while !content.is_empty() {
+            args.push(content.parse()?);
+        }
+        Ok(Action { action, args })
     }
 }
 impl Parse for SExpr {
@@ -91,6 +108,9 @@ impl Parse for SExpr {
                 args.push(content.parse()?);
             }
             SExpr::Nested(f, args)
+        } else if input.peek(Token![_]) {
+            let underscore: Token![_] = input.parse()?;
+            SExpr::Implicit(underscore.span())
         } else {
             SExpr::Leaf(input.parse()?)
         })
@@ -115,26 +135,46 @@ impl Emitter {
     }
 
     fn emit_action(&mut self, action: &Action) -> Result<()> {
-        let Action { action, lhs, rhs } = action;
+        let Action { action, args } = action;
         self.action_span = action.span();
         self.emit(quote! { #[cfg(false)] struct #action; });
         let rb = self.rb.clone();
         match action.to_string().as_str() {
             s if let Some(kind) = Kind::from_str(s) => {
-                let bind = lhs.as_ident()?;
-                let (f, args) = rhs.as_app()?;
-                self.emit_atom(kind, bind, f, args)?;
+                ensure!(args.len() == 2, self.action_span, "expected 2 args");
+                let bind = match &args[0] {
+                    SExpr::Implicit(span) => self.new_tmp_var_ident(*span),
+                    SExpr::Leaf(ident) => ident.clone(),
+                    SExpr::Custom(expr) => return err!(expr.span(), "expected leaf"),
+                    SExpr::Nested(ident, ..) => return err!(ident.span(), "expected leaf"),
+                };
+                let (f, args) = args[1].as_app()?;
+                self.emit_atom(kind, &bind, f, args)?;
+            }
+            s if let Some(kind) = KindUnary::from_str(s) => {
+                ensure!(args.len() == 1, self.action_span, "expected 1 arg");
+                let unit = self.unit();
+                let (f, args) = args[0].as_app()?;
+                let args = self.emit_args(kind.args_handling(), args)?;
+                let action = Ident::new(kind.to_str(), self.action_span);
+                let args = quote::quote_spanned! { f.span() => (#(#args,)*) };
+                match kind {
+                    KindUnary::Contains | KindUnary::Insert => {
+                        self.emit(quote! { #rb.#action(#f, #args, #unit); })
+                    }
+                    KindUnary::Call => {
+                        self.emit(quote! { #rb.#action(#f, #args); });
+                    }
+                }
             }
             "uni" => {
-                let lhs = self.emit_arg(Kind::Add, lhs)?;
-                let rhs = self.emit_arg(Kind::Add, rhs)?;
+                ensure!(args.len() == 2, self.action_span, "expected 2 args");
+                let lhs = self.emit_arg(Kind::Add, &args[0])?;
+                let rhs = self.emit_arg(Kind::Add, &args[1])?;
                 let uni = Ident::new("union", self.action_span);
                 self.emit(quote! { #rb.#uni(#lhs, #rhs); });
             }
-            a => {
-                let msg = format!("unknown action `{a}`");
-                return Err(syn::Error::new(action.span(), msg).into_compile_error());
-            }
+            a => return err!(action.span(), "unknown action `{a}`"),
         }
         Ok(())
     }
@@ -142,21 +182,17 @@ impl Emitter {
     fn emit_atom(&mut self, kind: Kind, bind: &Ident, f: &Ident, args: &[SExpr]) -> Result<()> {
         self.emit(quote! { #[cfg(false)] fn #f() {} });
         let args = self.emit_args(kind.args_handling(), args)?;
-        let args_tuple = Ident::new("args", f.span());
         let rb = self.rb.clone();
-        self.emit(quote! { let #args_tuple = (#(#args,)*); });
         if matches!(kind, Kind::Query) {
             self.maybe_init_var(bind, kind).unwrap();
         }
         let action = Ident::new(kind.to_str(), self.action_span);
+        let args = quote::quote_spanned! { f.span() => (#(#args,)*) };
         match kind {
             Kind::Add => {
-                self.emit(quote! { let #bind = dateg::Entry::Var(#rb.#action(#f, #args_tuple)); })
+                self.emit(quote! { let #bind = dateg::Entry::Var(#rb.#action(#f, #args)); })
             }
-            Kind::Call => {
-                self.emit(quote! { let #bind = dateg::Entry::Var(#rb.#action(#f, #args_tuple)); })
-            }
-            _ => self.emit(quote! { #rb.#action(#f, #args_tuple, #bind); }),
+            _ => self.emit(quote! { #rb.#action(#f, #args, #bind); }),
         }
         Ok(())
     }
@@ -169,25 +205,29 @@ impl Emitter {
         Ok(r)
     }
     fn emit_arg(&mut self, kind: Kind, arg: &SExpr) -> Result<TokenStream> {
-        match arg {
+        Ok(match arg {
+            SExpr::Implicit(span) => {
+                let tmp = self.new_tmp_var_ident(*span);
+                self.maybe_init_var(&tmp, kind)?;
+                quote! { #tmp }
+            }
             SExpr::Leaf(ident) => {
                 self.maybe_init_var(ident, kind)?;
-                Ok(quote! { #ident })
+                quote! { #ident }
             }
-            SExpr::Custom(expr) => Ok(quote! { dateg::Entry::Const(#expr) }),
+            SExpr::Custom(expr) => quote! { dateg::Entry::Const(#expr) },
             SExpr::Nested(f, args) => {
                 let tmp = self.new_tmp_var_ident(f.span());
                 self.emit_atom(kind, &tmp, f, args)?;
-                Ok(quote! { #tmp })
+                quote! { #tmp }
             }
-        }
+        })
     }
 
     fn maybe_init_var(&mut self, var: &Ident, kind: Kind) -> Result<()> {
         if self.variables.insert(var.clone()) {
             if !matches!(kind, Kind::Query) {
-                return Err(syn::Error::new(var.span(), format!("var was not defined"))
-                    .into_compile_error());
+                return err!(var.span(), "var was not defined");
             }
             let rb = self.rb.clone();
             self.emit(quote! { let #var = dateg::Entry::Var(#rb.var_named(stringify!(#var))); });
@@ -198,33 +238,38 @@ impl Emitter {
         self.counter += 1;
         Ident::new(&format!("__tmp{}", self.counter), span)
     }
+
+    fn unit(&self) -> TokenStream {
+        quote::quote_spanned! { self.action_span => dateg::Entry::Const(dateg::token_unit()) }
+    }
 }
 
-#[derive(Clone, Copy)]
-enum Kind {
-    Query,
-    Add,
-    Set,
-    Call,
+macro_rules! enum_str {
+    (enum $Enum:ident { $( $Variant:ident $from:literal $to:literal,)* }) => {
+        #[derive(Clone, Copy)]
+        enum $Enum { $($Variant,)* }
+        impl $Enum {
+            fn from_str(s: &str) -> Option<Self> {
+                match s {
+                    $( $from => Some(Self::$Variant), )*
+                    _ => None,
+                }
+            }
+            fn to_str(&self) -> &'static str {
+                match self { $( Self::$Variant => $to, )* }
+            }
+        }
+    };
+}
+
+enum_str! {
+    enum Kind {
+        Query "query" "query",
+        Add "add" "add",
+        Set "set" "set",
+    }
 }
 impl Kind {
-    fn from_str(s: &str) -> Option<Self> {
-        Some(match s {
-            "query" => Self::Query,
-            "add" => Self::Add,
-            "set" => Self::Set,
-            "call" => Self::Call,
-            _ => return None,
-        })
-    }
-    fn to_str(self) -> &'static str {
-        match self {
-            Self::Query => "query",
-            Self::Add => "add",
-            Self::Set => "set",
-            Self::Call => "call",
-        }
-    }
     fn args_handling(self) -> Self {
         match self {
             Self::Query => self,
@@ -232,22 +277,30 @@ impl Kind {
         }
     }
 }
+enum_str! {
+    enum KindUnary {
+        Contains "contains" "query",
+        Insert "insert" "set",
+        Call "call" "call",
+    }
+}
+impl KindUnary {
+    fn args_handling(self) -> Kind {
+        match self {
+            Self::Contains => Kind::Query,
+            Self::Insert | Self::Call => Kind::Add,
+        }
+    }
+}
 
 impl SExpr {
-    fn as_ident(&self) -> Result<&Ident> {
-        let span = match self {
-            Self::Leaf(ident) => return Ok(ident),
-            Self::Custom(expr) => expr.span(),
-            Self::Nested(f, _) => f.span(),
-        };
-        Err(syn::Error::new(span, format!("expected ident")).into_compile_error())
-    }
     fn as_app(&self) -> Result<(&Ident, &[Self])> {
         let span = match self {
+            Self::Implicit(span) => *span,
             Self::Leaf(ident) => ident.span(),
             Self::Custom(expr) => expr.span(),
             Self::Nested(f, args) => return Ok((f, args)),
         };
-        Err(syn::Error::new(span, format!("expected app")).into_compile_error())
+        err!(span, "expected app")
     }
 }

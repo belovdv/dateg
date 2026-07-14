@@ -38,12 +38,12 @@ theory!(Nat(
     (rewrite
         (expr name (expr2 x y))
         (expr name (expr2 y x))
-        if (query u (is_comas name))
+        if (contains (is_comas name))
     )
     (birewrite
         (expr name (expr2 x (expr name (expr2 y z))))
         (expr name (expr2 (expr name (expr2 x y)) z))
-        if (query u (is_comas name))
+        if (contains (is_comas name))
     )
 
     (birewrite (inc x) (add x (one)))

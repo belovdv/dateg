@@ -237,26 +237,26 @@ fn evaluation() {
     }
     rule!(ar;
         // Function call args have to be bound
-        (query ca (table_const a))
-        (query cb (table_const b))
+        (query _ (table_const a))
+        (query _ (table_const b))
         // This is necessary to avoid generation of new values
-        (query cab (table_const ab))
+        (query _ (table_const ab))
 
-        // Result of function can be unbound
+        // Function result can be unbound
         (query aa (eval_add a {v0}))
 
         // The main part of query lhs: `\exists a,b,ab \in universe: ab = a * b`
         (query ab (eval_mul a b))
 
         // Ensure we get natural divisors
-        (query unit (not_is_one a))
-        (query unit (not_is_one b))
+        (contains (not_is_one a))
+        (contains (not_is_one b))
 
         // Mark `ab` as divisible
-        (set unit (is_divisible (table_const ab)))
+        (insert (is_divisible (table_const ab)))
 
         // Demonstration of `call` usage
-        (call _r (print ab a b))
+        (call (print ab a b))
         // Note, that calling `print` in `query` is also possible.
         // Code: `(query _r (print ab a b))`
     );
