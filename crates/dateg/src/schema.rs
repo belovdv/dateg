@@ -39,9 +39,25 @@ pub trait TokenTuple: Copy + Eq + Hash + Send + Sync + 'static {
 pub trait IntoEntries {
     fn into_entries(self, rb: &mut RuleBuilder) -> Vec<QueryEntry>;
 }
-pub trait TokenTuplePrimitive: TokenTuple {
-    type Inner: Send + Sync + 'static;
-    fn into_values(self, es: &ExecutionState) -> Self::Inner;
+pub trait TokenTuplePartialResolve: TokenTuple {
+    type Resolved: Send + Sync + 'static;
+    fn partial_resolve(self, es: &ExecutionState) -> Self::Resolved;
+}
+pub trait TokenPartialResolve: Token {
+    type Resolved: Send + Sync + 'static;
+    fn partial_resolve(self, es: &ExecutionState) -> Self::Resolved;
+}
+impl<T: BaseValue> TokenPartialResolve for TokenPrimitive<T> {
+    type Resolved = T;
+    fn partial_resolve(self, es: &ExecutionState) -> Self::Resolved {
+        es.base_values().unwrap(self.into_egglog())
+    }
+}
+impl<T: Send + Sync + 'static> TokenPartialResolve for TokenOpaque<T> {
+    type Resolved = Self;
+    fn partial_resolve(self, _: &ExecutionState) -> Self::Resolved {
+        self
+    }
 }
 
 macro_rules! impl_tt {
@@ -86,12 +102,12 @@ macro_rules! impl_tt {
             }
         }
         #[allow(unused)]
-        impl<$($T: BaseValue),*> TokenTuplePrimitive for ($(TokenPrimitive<$T>,)*) {
-            type Inner = ($($T,)*);
-            fn into_values(self, es: &ExecutionState) -> Self::Inner {
+        impl<$($T: TokenPartialResolve),*> TokenTuplePartialResolve for ($($T,)*) {
+            type Resolved = ($($T::Resolved,)*);
+            fn partial_resolve(self, es: &ExecutionState) -> Self::Resolved {
                 #[allow(non_snake_case)]
                 let ($($T,)*) = self;
-                ($(es.base_values().unwrap::<$T>($T.into_egglog()),)*)
+                ($($T.partial_resolve(es),)*)
             }
         }
     };

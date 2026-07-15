@@ -2,6 +2,7 @@ use std::{hash::Hash, marker::PhantomData};
 
 use egglog_bridge::ColumnTy;
 use egglog_core_relations::{BaseValue, Value};
+use egglog_numeric_id::NumericId;
 
 pub trait EGraphValue {
     type Token: Token;
@@ -103,4 +104,26 @@ impl<T: Send + Sync + 'static> Hash for TokenOpaque<T> {
         self.0.hash(state);
         self.1.hash(state);
     }
+}
+
+impl<T: BaseValue> std::fmt::Debug for TokenPrimitive<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{}({})",
+            short_type_name::<T>(),
+            self.0.index()
+        ))
+    }
+}
+impl<T: Send + Sync + 'static> std::fmt::Debug for TokenOpaque<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{}({})",
+            short_type_name::<T>(),
+            self.0.index()
+        ))
+    }
+}
+fn short_type_name<T>() -> &'static str {
+    std::any::type_name::<T>().split("::").last().unwrap()
 }

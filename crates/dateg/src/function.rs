@@ -17,19 +17,19 @@ impl<S: Schema> Function<S> {
 }
 
 impl EGraph {
-    pub fn new_function<Inputs: TokenTuplePrimitive, Output: TokenPrimitiveMarker>(
+    pub fn new_function<Inputs: TokenTuplePartialResolve, Output: TokenPrimitiveMarker>(
         &mut self,
-        f: impl Fn(Inputs::Inner) -> Output::Inner + Clone + Send + Sync + 'static,
+        f: impl Fn(Inputs::Resolved) -> Output::Inner + Clone + Send + Sync + 'static,
     ) -> Function<(Inputs, Output, True)> {
         self.new_function_partial(move |args| Some(f(args)))
     }
 
-    pub fn new_function_partial<Inputs: TokenTuplePrimitive, Output: TokenPrimitiveMarker>(
+    pub fn new_function_partial<Inputs: TokenTuplePartialResolve, Output: TokenPrimitiveMarker>(
         &mut self,
-        f: impl Fn(Inputs::Inner) -> Option<Output::Inner> + Clone + Send + Sync + 'static,
+        f: impl Fn(Inputs::Resolved) -> Option<Output::Inner> + Clone + Send + Sync + 'static,
     ) -> Function<(Inputs, Output, True)> {
         let f = make_external_func(move |es, values| {
-            let r = f(Inputs::from_egglog(values).into_values(es));
+            let r = f(Inputs::from_egglog(values).partial_resolve(es));
             r.map(|r| es.base_values().get::<Output::Inner>(r))
         });
         let id = self.inner.register_external_func(Box::new(f));

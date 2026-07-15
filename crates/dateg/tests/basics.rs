@@ -301,11 +301,18 @@ fn merge() {
         (add v2 (v c2))
         (add v3 (v c3))
         (add v4 (v c4))
+
+        (evaluation log_path_concat (Vertex Vertex Vertex usize) () { |(v1, v2, v3, len)| {
+            if false {
+                eprintln!("construct path {v1:?}->{v2:?}->{v3:?} of len {len}")
+            }
+        } })
     }
 
     rule!(ps;
         (query len (add (path a b) (path b c)))
         (set len (path a c))
+        (call (log_path_concat a b c len))
     );
     rule!(ps;
         (query {c0} (path a b))
