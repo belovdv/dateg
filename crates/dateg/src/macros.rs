@@ -1,4 +1,10 @@
-/// This macro has no complex logic, just basic syntax sugar (uses [`rule`] macro)
+/// Simple DSL
+///
+/// Syntax: `execute! {<egraph ref expr>; <action>* }`
+///
+/// Independently translates actions to method calls on egraph, binds results to local variables
+///
+/// Adds some hacks for syntax highlighting
 #[macro_export]
 #[rust_analyzer::macro_style(braces)]
 macro_rules! execute {
@@ -87,6 +93,28 @@ macro_rules! execute {
     };
 }
 
+/// Defines `Theory` structure with `Default` implementation, initializing `EGraph`
+///
+/// Built on top of [`execute`]
+///
+/// Primary motivation - wrap everything produced by [`execute`] into structure for later usage
+///
+/// Additionally does some initialization for types (primitive and opaque)
+///
+/// Syntax:
+/// ```no_run
+/// # macro_rules! theory { ($($tt:tt)*) => { () }; };
+/// theory!(TheoryName(
+///     (sort <opaque sort name>)  // adds unit type and implements `EGraphValue` for it
+///     (ty <primitive sort name>) // adds to initialization of `EGraph`
+/// )(
+///     <action>* // These actions should produce results, they will be added as fields to `Theory`
+/// )(
+///     <action>* // These actions will be added to `default` as `execute! {self; <actions>* }`
+/// )
+/// <{<self_>; arbitrary post-init code }>?
+/// );
+/// ```
 #[macro_export]
 #[rust_analyzer::macro_style(parenthesized)]
 macro_rules! theory {
@@ -107,8 +135,10 @@ macro_rules! theory {
                 $( $crate::execute!(@eg; $action $name $($prog)*); )*
                 $( $crate::execute!(@eg; $action_extra $($prog_extra)*); )*
                 eg.set_ruleset_active("");
-                $( {$($post_init)*} )?
-                Self { eg, $($name),* }
+                #[allow(unused_mut)]
+                let mut r = Self { eg, $($name),* };
+                $( let $self_ = &mut r; {$($post_init)*} )?
+                r
             }
         }
 
