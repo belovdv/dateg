@@ -266,3 +266,68 @@ fn evaluation() {
 
     // panic!("GOOD")
 }
+
+#[test]
+fn merge() {
+    theory!(Geography(
+        (sort Vertex)
+        (ty usize)
+    )(
+        (constructor v (usize) Vertex)
+        (function edge (Vertex Vertex) usize)
+        (evaluation add (usize usize) usize { |(a, b)| a + b })
+        (evaluation min (usize usize) usize { |(a, b)| {
+            println!("min {a} {b}: {}", std::cmp::min(a, b));
+            std::cmp::min(a, b)
+        } })
+        (function path (Vertex Vertex) usize :merge min)
+    )(
+        (rewrite (edge a b) (path a b))
+    ));
+    let mut ps = Geography::default();
+    let v = ps.v;
+    let edge = ps.edge;
+    let path = ps.path;
+    let add = ps.add;
+
+    execute! {ps;
+        (val c0 (usize) {0})
+        (val c1 (usize) {1})
+        (val c2 (usize) {2})
+        (val c3 (usize) {3})
+        (val c4 (usize) {4})
+        (add v0 (v c0))
+        (add v1 (v c1))
+        (add v2 (v c2))
+        (add v3 (v c3))
+        (add v4 (v c4))
+    }
+
+    rule!(ps;
+        (query len (add (path a b) (path b c)))
+        (set len (path a c))
+    );
+    rule!(ps;
+        (query {c0} (path a b))
+        (uni a b)
+    );
+
+    execute! {ps;
+        (set c1 (edge v0 v1))
+        (set c1 (edge v1 v2))
+        (set c1 (edge v2 v3))
+        (set c1 (edge v1 v4))
+    }
+    while ps.run_ruleset_active() {}
+
+    assert_eq!(ps.row_get(path, (v0, v3)).unwrap().get(&ps), 3);
+    assert_eq!(ps.row_get(path, (v0, v4)).unwrap().get(&ps), 2);
+    assert!(ps.row_get(path, (v2, v4)).is_none());
+
+    execute! {ps;
+        (set c0 (edge v3 v4))
+    }
+    while ps.run_ruleset_active() {}
+    let v4 = v4.canon(&ps);
+    assert_eq!(ps.row_get(path, (v2, v4)).unwrap().get(&ps), 1);
+}

@@ -17,12 +17,15 @@ macro_rules! execute {
     (@$eg:expr; relation $table:ident ($($Args:ident)*)) => {
         $crate::execute!(@@$eg; table new_table_relation; $table ($($Args)*));
     };
-    (@@$eg:expr; table $method:ident; $table:ident ($($Args:ident)*) $($Ret:ident)?) => {
+    (@$eg:expr; function $table:ident ($($Args:ident)*) $Ret:ident :merge $m:ident) => {
+        $crate::execute!(@@$eg; table new_table_function_with_merge; $table ($($Args)*) $Ret ($m));
+    };
+    (@@$eg:expr; table $m:ident; $table:ident ($($Args:ident)*) $($Ret:ident)? $(($arg:tt))?) => {
         #[cfg(false)] fn $table() {};
-        let $table = $eg.$method::<
+        let $table = $eg.$m::<
             ($($crate::helper!(@token $Args),)*)
             $(, $crate::helper!(@token $Ret))?
-        >(stringify!($table));
+        >(stringify!($table) $(, $arg)?);
     };
     // Evaluation
     (@$eg:expr; evaluation $func:ident ($($Args:ident)*) $Ret:tt {$eval:expr}) => {
@@ -48,7 +51,7 @@ macro_rules! execute {
         #[cfg(false)] fn $table() {}
         let $name = $eg.row_add($table, ($($args,)*));
     };
-    (@$eg:expr; set ($table:ident $($args:ident)*) $val:ident) => {
+    (@$eg:expr; set $val:ident ($table:ident $($args:ident)*) ) => {
         #[cfg(false)] fn $table() {}
         $eg.row_set($table, ($($args,)*), $val);
     };
@@ -145,7 +148,7 @@ macro_rules! theory {
     (@field_ty constructor ($($Args:ident)*) $Ret:ident) => {
         $crate::Table<$crate::helper!(@triple ($($Args)*) ($Ret) True)>
     };
-    (@field_ty function ($($Args:ident)*) $Ret:ident) => {
+    (@field_ty function ($($Args:ident)*) $Ret:ident $(:merge $merge:ident)?) => {
         $crate::Table<$crate::helper!(@triple ($($Args)*) ($Ret) False)>
     };
     (@field_ty relation ($($Args:ident)*)) => {

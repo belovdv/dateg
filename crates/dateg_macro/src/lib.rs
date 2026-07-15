@@ -143,9 +143,14 @@ impl Emitter {
             s if let Some(kind) = Kind::from_str(s) => {
                 ensure!(args.len() == 2, self.action_span, "expected 2 args");
                 let bind = match &args[0] {
-                    SExpr::Implicit(span) => self.new_tmp_var_ident(*span),
+                    SExpr::Implicit(span) => self.new_ident(*span),
                     SExpr::Leaf(ident) => ident.clone(),
-                    SExpr::Custom(expr) => return err!(expr.span(), "expected leaf"),
+                    SExpr::Custom(expr) => {
+                        let val = self.new_ident(expr.span());
+                        self.emit(quote! { let #val = dateg::Entry::Const(#expr); });
+                        self.variables.insert(val.clone());
+                        val
+                    }
                     SExpr::Nested(ident, ..) => return err!(ident.span(), "expected leaf"),
                 };
                 let (f, args) = args[1].as_app()?;
@@ -155,6 +160,7 @@ impl Emitter {
                 ensure!(args.len() == 1, self.action_span, "expected 1 arg");
                 let unit = self.unit();
                 let (f, args) = args[0].as_app()?;
+                self.emit(quote! { #[cfg(false)] fn #f() {} });
                 let args = self.emit_args(kind.args_handling(), args)?;
                 let action = Ident::new(kind.to_str(), self.action_span);
                 let args = quote::quote_spanned! { f.span() => (#(#args,)*) };
@@ -207,7 +213,7 @@ impl Emitter {
     fn emit_arg(&mut self, kind: Kind, arg: &SExpr) -> Result<TokenStream> {
         Ok(match arg {
             SExpr::Implicit(span) => {
-                let tmp = self.new_tmp_var_ident(*span);
+                let tmp = self.new_ident(*span);
                 self.maybe_init_var(&tmp, kind)?;
                 quote! { #tmp }
             }
@@ -217,7 +223,7 @@ impl Emitter {
             }
             SExpr::Custom(expr) => quote! { dateg::Entry::Const(#expr) },
             SExpr::Nested(f, args) => {
-                let tmp = self.new_tmp_var_ident(f.span());
+                let tmp = self.new_ident(f.span());
                 self.emit_atom(kind, &tmp, f, args)?;
                 quote! { #tmp }
             }
@@ -234,7 +240,7 @@ impl Emitter {
         }
         Ok(())
     }
-    fn new_tmp_var_ident(&mut self, span: Span) -> Ident {
+    fn new_ident(&mut self, span: Span) -> Ident {
         self.counter += 1;
         Ident::new(&format!("__tmp{}", self.counter), span)
     }
