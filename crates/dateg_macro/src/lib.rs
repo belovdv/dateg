@@ -9,6 +9,40 @@ use syn::{
     spanned::Spanned,
 };
 
+/// Constructs `rule` for `EGraph`.
+///
+/// Example (from `dateg` basic tests):
+/// ```no_run
+/// # macro_rules! rule { ($($tt:tt)*) => { () }; };
+/// let rule_id = rule!(egraph;
+///     (query len (add (path a b) (path b c)))
+///     (set len (path a c))
+///     (call (log_path_concat a b c len))
+/// );
+/// ```
+///
+/// Syntax: `rule!(<EGraph ref expr>; <action>*)`
+///
+/// Actions are symbolic expressions with nesting
+/// - functional symbol can refer to table or, sometimes, function
+/// - nested expressions are flattened using extra variable
+/// - nested expressions use one of `query` or `add` basing on side of action
+/// - leaf can be identifier (variable) or custom expression in braces (constant)
+///
+/// LHS Actions:
+/// - `(query <result> (<table|func> <args>*))`: primarily (kinda only) lhs action
+///     - `table`: creates variables if they weren't created before, queries database
+///     - `function`: creates result variable if it wasn't created, binds it to evaluation of inputs
+/// - `(contains (<table|func> <args>*)`: syntax sugar on top of `query` for cases with unit type
+///
+/// RHS Actions:
+/// - `(add <result> (<table|func> <args>*))`: defines value
+///     - `table`: gets or create existing value or creates new - can be used only with constructors
+///     - `func`: evaluates function on arguments
+/// - `(set <result> (<table> <args>*))`: set value, call merge procedure on conflict
+/// - `(uni <a> <b>)`: unions two values (variables of opaque types)
+/// - `(insert (<table> <args>*))`: syntax sugar on top of `set` for relations
+/// - `(call (<func> <args>*))`: similar to `add`, but for return value unit (usually logging)
 #[proc_macro]
 pub fn rule(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as RuleInput);
@@ -196,6 +230,11 @@ impl Emitter {
         let args = quote::quote_spanned! { f.span() => (#(#args,)*) };
         match kind {
             Kind::Add => {
+                ensure!(
+                    !self.variables.contains(bind),
+                    bind.span(),
+                    "this definition will shadow previous mentions, use different name"
+                );
                 self.emit(quote! { let #bind = dateg::Entry::Var(#rb.#action(#f, #args)); })
             }
             _ => self.emit(quote! { #rb.#action(#f, #args, #bind); }),
