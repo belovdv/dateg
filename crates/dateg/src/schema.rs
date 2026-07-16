@@ -34,6 +34,7 @@ pub trait TokenTuple: Copy + Eq + Hash + Send + Sync + 'static {
     type Entries: IntoEntries;
 
     fn type_ids() -> impl Iterator<Item = TypeId>;
+    fn opaque_into_values(self) -> impl Iterator<Item = Value>;
 }
 pub trait IntoEntries {
     fn into_entries(self, rb: &mut RuleBuilder) -> Vec<QueryEntry>;
@@ -85,6 +86,11 @@ macro_rules! impl_tt {
             type Entries = ($(Entry<$T>,)*);
             fn type_ids() -> impl Iterator<Item = TypeId> {
                 [$(TypeId::of::<$T>()),*].into_iter()
+            }
+            fn opaque_into_values(self) -> impl Iterator<Item = Value> {
+                #[allow(non_snake_case)]
+                let ($($T,)*) = self;
+                <[Option<Value>; _]>::into_iter([$($T.as_opaque()),*]).flatten()
             }
         }
         #[allow(unused)]

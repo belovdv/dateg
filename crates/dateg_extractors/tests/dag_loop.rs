@@ -1,17 +1,15 @@
 mod nat;
 
 use dateg::{EGraph, EGraphValue, TokenOpaque, execute};
-use dateg_extractors::define_index;
-
-pub struct Expr;
-impl EGraphValue for Expr {
-    type Token = TokenExpr;
-}
-pub type TokenExpr = TokenOpaque<Expr>;
+use dateg_extractors_macro::index_dag;
 
 #[test]
-#[ignore = "failing"]
 fn dag_basic() {
+    pub struct Expr;
+    impl EGraphValue for Expr {
+        type Token = TokenOpaque<Expr>;
+    }
+
     let mut eg = EGraph::default();
     execute! {eg;
         (constructor c1 () Expr)
@@ -31,23 +29,21 @@ fn dag_basic() {
     }
     while eg.run_ruleset("") {}
 
-    define_index!(Index
-        (datatype Expr -> EExpr
+    index_dag!(Index
+        expr: EExpr (datatype Expr
             C1 ()
             F (Expr)
             G (Expr)
         )
     );
-    let mut extractor = Index::extractor_dag_basic(&eg, (c1, f, g));
-
     let x = x.canon(&eg);
-    let index: Index = extractor.extract(x).unwrap();
+    let index = Index::extract(&eg, x, (c1, f, g));
     impl Index {
-        fn expr_to_string(&self, expr: TokenExpr) -> String {
-            match self.e_expr[&expr].1[0] {
-                EExpr::C1(_) => format!("c1"),
-                EExpr::F((a,)) => format!("f {}", self.expr_to_string(a)),
-                EExpr::G((a,)) => format!("g {}", self.expr_to_string(a)),
+        fn expr_to_string(&self, expr: TokenOpaque<Expr>) -> String {
+            match self.expr[&expr] {
+                EExpr::C1() => format!("(c1)"),
+                EExpr::F(a) => format!("(f {})", self.expr_to_string(a)),
+                EExpr::G(a) => format!("(g {})", self.expr_to_string(a)),
             }
         }
     }

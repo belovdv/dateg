@@ -1,8 +1,8 @@
 mod nat;
 
 use dateg::{TokenOpaque, execute};
-use dateg_extractors::define_index;
 
+use dateg_extractors_macro::index_dag;
 use nat::*;
 
 #[test]
@@ -20,14 +20,13 @@ fn dag_basic() {
     }
     while nat.run_ruleset("") {}
 
-    define_index!(Index
-        (datatype Expr -> EExpr
+    index_dag!(Index
+        expr: EExpr (datatype Expr
             One ()
             Inc (Expr)
             Mul (Expr Expr)
         )
     );
-    let mut extractor = Index::extractor_dag_basic(&nat, (one, inc, mul));
 
     let e4 = nat.get_val(4);
     let e13 = nat.get_val(13);
@@ -48,7 +47,7 @@ fn dag_basic() {
             &["(mul (mul (inc (one)) (inc (one))) (mul (inc (one)) (inc (one))))"],
         ),
     ] {
-        let index: Index = extractor.extract(e).unwrap();
+        let index = Index::extract(&nat, e, (one, inc, mul));
 
         let got = index.expr_to_string(e);
         assert!(expected.contains(&got.as_str()), "{expected:#?}    {got}");
@@ -56,10 +55,14 @@ fn dag_basic() {
 
     impl Index {
         fn expr_to_string(&self, expr: TokenOpaque<Expr>) -> String {
-            match self.e_expr[&expr].1[0] {
-                EExpr::One(()) => format!("(one)"),
-                EExpr::Inc((a,)) => format!("(inc {})", self.expr_to_string(a)),
-                EExpr::Mul((a, b)) => {
+            if !self.expr.contains_key(&expr) {
+                return "???".to_string();
+            }
+
+            match self.expr[&expr] {
+                EExpr::One() => format!("(one)"),
+                EExpr::Inc(a) => format!("(inc {})", self.expr_to_string(a)),
+                EExpr::Mul(a, b) => {
                     let mut a = self.expr_to_string(a);
                     let mut b = self.expr_to_string(b);
                     // To simplify testing
