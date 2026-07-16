@@ -1,8 +1,8 @@
 mod nat;
 
 use dateg::{EGraph, TokenOpaque, execute};
-use dateg_extractors::{IndexFor, define_index};
 
+use dateg_extractors::tree::{CostFor, IndexFor, index_tree};
 use nat::*;
 
 #[test]
@@ -20,33 +20,34 @@ fn concrete() {
     }
     while nat.run_ruleset("") {}
 
-    define_index!(Index
-        (datatype Expr -> EExpr
+    index_tree!(Index
+        expr: EExpr (datatype Expr
             One ()
             Inc (Expr)
             Mul (Expr Expr)
         )
     );
-    let index = Index::extractor_tree_basic(&nat, (one, inc, mul));
+
+    let index = Index::extract(&nat, (one, inc, mul));
 
     fn eval(nat: &EGraph, index: &Index, expr: TokenOpaque<Expr>) -> usize {
         match index.value(expr.canon(nat)) {
-            EExpr::One(()) => 1,
-            EExpr::Inc((e,)) => eval(nat, index, e) + 1,
-            EExpr::Mul((a, b)) => eval(nat, index, a) * eval(nat, index, b),
+            EExpr::One() => 1,
+            EExpr::Inc(e) => eval(nat, index, e) + 1,
+            EExpr::Mul(a, b) => eval(nat, index, a) * eval(nat, index, b),
         }
     }
     fn expr_to_strings(nat: &EGraph, index: &Index, expr: TokenOpaque<Expr>) -> Vec<String> {
         let mut r = vec![];
         for option in index.get_full(expr.canon(nat)).unwrap().1.iter() {
             match option {
-                EExpr::One(()) => r.push(format!("o")),
-                EExpr::Inc((e,)) => {
+                EExpr::One() => r.push(format!("o")),
+                EExpr::Inc(e) => {
                     for e in expr_to_strings(nat, index, *e) {
                         r.push(format!("i{e}"));
                     }
                 }
-                EExpr::Mul((a, b)) => {
+                EExpr::Mul(a, b) => {
                     for a in expr_to_strings(nat, index, *a) {
                         for b in expr_to_strings(nat, index, *b) {
                             r.push(format!("m{a}{b}"));
@@ -88,33 +89,33 @@ fn concrete() {
         expr = nat.row_get(inc, (expr,)).unwrap();
     }
 
-    define_index!(IndexFullC1
-        (datatype Expr -> IFExprC1
+    index_tree!(IndexFullC1
+        expr: IFExprC1 (datatype Expr
             IFC1One ()
             IFC1Inc (Expr)
             IFC1Mul (Expr Expr)
             IFC1Square (Expr)
         )
     );
-    let index_full_c1 = IndexFullC1::extractor_tree_basic(&nat, (one, inc, mul, square));
-    define_index!(IndexFullC2
-        (datatype Expr -> IFExprC2
+    let index_full_c1 = IndexFullC1::extract(&nat, (one, inc, mul, square));
+    index_tree!(IndexFullC2
+        expr: IFExprC2 (datatype Expr
             IFC2One ()
             IFC2Inc (Expr)
             IFC2Mul (Expr Expr)
-            IFC2Square (Expr) :cost 2
+            IFC2Square (Expr) {|(arg,), index| Some(2 + index.cost(arg)?) }
         )
     );
-    let index_full_c2 = IndexFullC2::extractor_tree_basic(&nat, (one, inc, mul, square));
-    define_index!(IndexFullC3
-        (datatype Expr -> IFC3Expr
+    let index_full_c2 = IndexFullC2::extract(&nat, (one, inc, mul, square));
+    index_tree!(IndexFullC3
+        expr: IFC3Expr (datatype Expr
             IFC3One ()
             IFC3Inc (Expr)
             IFC3Mul (Expr Expr)
-            IFC3Square (Expr) :cost 3
+            IFC3Square (Expr) {|(arg,), index| Some(3 + index.cost(arg)?) }
         )
     );
-    let index_full_c3 = IndexFullC3::extractor_tree_basic(&nat, (one, inc, mul, square));
+    let index_full_c3 = IndexFullC3::extract(&nat, (one, inc, mul, square));
 
     let e4 = nat.get_val(4);
     // square is not used, there is no such thing
@@ -149,28 +150,28 @@ fn generic() {
     }
     while nat.run_ruleset("") {}
 
-    define_index!(Index
-        (datatype Expr -> EExpr
+    index_tree!(Index
+        expr: EExpr (datatype Expr
             ExprAny (String ExprTuple)
         )
-        (datatype ExprTuple -> EExprTuple
+        expr_tuple: EExprTuple (datatype ExprTuple
             Expr0 ()
             Expr1 (Expr)
             Expr2 (Expr Expr)
         )
     );
 
-    let index = Index::extractor_tree_basic(&nat, expr, (expr0, expr1, expr2));
+    let index = Index::extract(&nat, expr, (expr0, expr1, expr2));
 
     impl Index {
         fn expr_to_string(&self, nat: &EGraph, expr: TokenOpaque<Expr>) -> String {
             match self.value(expr) {
-                EExpr::ExprAny((op, args)) => match self.value(args) {
-                    EExprTuple::Expr0(()) => format!("({})", op.get(nat)),
-                    EExprTuple::Expr1((a,)) => {
+                EExpr::ExprAny(op, args) => match self.value(args) {
+                    EExprTuple::Expr0() => format!("({})", op.get(nat)),
+                    EExprTuple::Expr1(a) => {
                         format!("({} {})", op.get(nat), self.expr_to_string(nat, a))
                     }
-                    EExprTuple::Expr2((a, b)) => {
+                    EExprTuple::Expr2(a, b) => {
                         format!(
                             "({} {} {})",
                             op.get(nat),

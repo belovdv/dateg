@@ -69,18 +69,6 @@ macro_rules! define_index {
             pub [< $Sort:snake >]: $crate::AHashMap<<$Token as dateg::EGraphValue>::Token, (usize, Vec<$Sort>)>,
         )*}
         impl $Index {
-            pub fn extractor_tree_basic<
-                $($( [< $Constructor Schema >]: dateg::Schema<Inputs = ($(<$Args as dateg::EGraphValue>::Token,)*), Output = <$Token as dateg::EGraphValue>::Token>, )*)*
-            >(eg: &dateg::EGraph $(,
-                ($([< $Constructor:snake >]),*):
-                ($(dateg::Table<[< $Constructor Schema >]>),*)
-            )* ) -> Self {
-                let mut extractor = dateg_extractors::ExtractorTree::<Self>::default();
-                $($(
-                    extractor.register_constructor::<$Constructor, _>([< $Constructor:snake >]);
-                )*)*
-                extractor.extract(eg)
-            }
             pub fn extractor_dag_basic<
                 $($( [< $Constructor Schema >]: dateg::Schema<Inputs = ($(<$Args as dateg::EGraphValue>::Token,)*), Output = <$Token as dateg::EGraphValue>::Token>, )*)*
             >(eg: &dateg::EGraph $(,

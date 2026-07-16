@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 dateg.path = "../dateg"
+dateg_extractors_macro.path = "../dateg_extractors_macro"
 ahash.workspace = true
 paste.workspace = true
 easy-smt.workspace = true

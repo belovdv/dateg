@@ -246,9 +246,19 @@ dependencies = [
  "ahash",
  "anyhow",
  "dateg",
+ "dateg_extractors_macro",
  "du_utils_timed",
  "easy-smt",
  "paste",
+]
+
+[[package]]
+name = "dateg_extractors_macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
