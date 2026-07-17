@@ -1,10 +1,10 @@
 mod nat;
 
 use dateg::{EGraph, EGraphValue, TokenOpaque, execute};
-use dateg_extractors_macro::index_dag;
+use dateg_extractors::dag::index_dag;
 
 #[test]
-fn dag_basic() {
+fn dag_loop() {
     pub struct Expr;
     impl EGraphValue for Expr {
         type Token = TokenOpaque<Expr>;

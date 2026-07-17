@@ -1,11 +1,12 @@
-use std::time::Duration;
+// TODO: implement full acyclicity encoding (not just 4-cycles)
+// TODO: try to remove vertexes that are obviously too expensive using tree cost and depth cost
 
-use du_utils_timed::{timed, timed_print};
+use du_utils_timed::timed_print;
 use easy_smt::{Context, SExpr};
 
 #[derive(Default)]
 pub struct Graph {
-    root: Option<VertexId>,
+    root: Vec<VertexId>,
     vars: Vec<Vertex>,
     used: Vec<bool>,
     conflict_groups: Vec<Vec<VertexId>>,
@@ -18,9 +19,9 @@ struct Vertex {
 }
 
 impl Graph {
-    pub fn set_root(&mut self, root: VertexId) {
-        assert!(self.root.is_none());
-        self.root = Some(root);
+    pub fn set_root(&mut self, root: impl IntoIterator<Item = VertexId>) {
+        assert!(self.root.is_empty());
+        self.root = root.into_iter().collect();
     }
 
     pub fn add_vertex(&mut self, is_all: bool, cost: usize) -> VertexId {
@@ -48,7 +49,7 @@ impl Graph {
     fn collect_usage(&mut self) {
         assert!(self.used.is_empty());
         self.used = vec![false; self.vars.len()];
-        let mut queue = vec![self.root.unwrap()];
+        let mut queue = self.root.clone();
         while let Some(next) = queue.pop() {
             if self.used[next] {
                 continue;
@@ -72,12 +73,11 @@ impl Graph {
         }
         let v: Vec<_> = (0..self.vars.len()).map(|_| var!()).collect();
 
-        ctx.assert(v[self.root.unwrap()]).unwrap();
-        for (n, var) in self.vars.iter().enumerate() {
-            if !self.used[n] {
-                continue;
-            }
-
+        assert!(!self.root.is_empty());
+        for root in self.root.iter().copied() {
+            ctx.assert(v[root]).unwrap();
+        }
+        for (n, var) in self.vars.iter().enumerate().filter(|(n, _)| self.used[*n]) {
             if var.cost > 0 {
                 let assert_soft = ctx.list(vec![
                     ctx.atom("assert-soft"),
@@ -149,20 +149,36 @@ impl Graph {
         }
         cycles
     }
+
+    fn detect_cycles_4(&self) -> Vec<[VertexId; 4]> {
+        let mut cycles = vec![];
+        for (a, _) in self.vars.iter().enumerate().filter(|(n, _)| self.used[*n]) {
+            for b in self.vars[a].args.iter().copied().filter(|b| a < *b) {
+                for c in self.vars[b].args.iter().copied().filter(|c| a < *c) {
+                    for d in self.vars[c].args.iter().copied() {
+                        if d != a && self.vars[d].args.contains(&a) {
+                            cycles.push([a, b, c, d]);
+                        }
+                    }
+                }
+            }
+        }
+        log::debug!("cycles_4 len {}", cycles.len());
+        cycles
+    }
 }
 
 struct DagExtractor {
     ctx: Context,
     dag: Graph,
     vars: Vec<SExpr>,
-
-    pub times: Vec<Duration>,
 }
 
 impl DagExtractor {
     fn new(mut g: Graph) -> Self {
-        g.collect_usage();
         let (ctx, vars) = timed_print("DagExtractor::new", 100, || {
+            g.collect_usage();
+
             let mut builder = easy_smt::ContextBuilder::new();
             if let Some(z3_path) = std::env::var("Z3_PATH").ok() {
                 builder.solver(&z3_path);
@@ -178,21 +194,14 @@ impl DagExtractor {
             let vars = g.initialize_context(&mut ctx);
             (ctx, vars)
         });
-        Self {
-            ctx,
-            dag: g,
-            vars,
-            times: vec![],
-        }
+        Self { ctx, dag: g, vars }
     }
 
     /// Increment for search
     ///
     ///  Expects that solution actually exists
     fn try_solve(&mut self) -> Option<Vec<bool>> {
-        let (time, r) = timed(|| self.ctx.check());
-        self.times.push(time);
-        match r.unwrap() {
+        match self.ctx.check().unwrap() {
             easy_smt::Response::Sat => {}
             easy_smt::Response::Unsat => panic!("unsat"),
             easy_smt::Response::Unknown => panic!("unknown"),
@@ -217,7 +226,9 @@ impl DagExtractor {
         if cycles.is_empty() {
             return Some(used);
         }
+        log::debug!("cycles.len {}", cycles.len());
 
+        // Note: it might be beneficial to only block the shortest cycles.
         for cycle in cycles {
             let cycle = self.ctx.and_many(cycle.iter().map(|&var| self.vars[var]));
             self.ctx.assert(self.ctx.not(cycle)).unwrap();
@@ -227,11 +238,23 @@ impl DagExtractor {
     }
 
     fn solve(&mut self) -> Vec<bool> {
-        loop {
-            if let Some(solution) = timed_print("DagExtractor::step", 1000, || self.try_solve()) {
+        for cycle in self.dag.detect_cycles_4() {
+            let cycle = self.ctx.and_many(cycle.iter().map(|&var| self.vars[var]));
+            self.ctx.assert(self.ctx.not(cycle)).unwrap();
+        }
+
+        let bound = match std::env::var("DATEG_GRAPH_SOLVE_BOUND") {
+            Ok(v) => v.parse().unwrap(),
+            Err(_) => usize::MAX,
+        };
+        for i in 0..bound {
+            if let Some(solution) =
+                timed_print(format!("DagExtractor::step {i}"), 100, || self.try_solve())
+            {
                 return solution;
             }
         }
+        panic!("out of bound on iterations ({bound})")
     }
 }
 
@@ -243,7 +266,7 @@ fn dag_extractor() {
     let b = g.add_vertex(false, 1);
     let c = g.add_vertex(true, 1);
     let d = g.add_vertex(true, 1);
-    g.set_root(root);
+    g.set_root([root]);
     g.add_vertex_args(root, [a, b]);
     g.add_vertex_args(b, [c, d]);
     let assignment = DagExtractor::new(g).solve();
@@ -259,7 +282,7 @@ fn dag_extractor() {
     let c = g.add_vertex(false, 1);
     let d = g.add_vertex(true, 1);
     let e = g.add_vertex(true, 1);
-    g.set_root(root);
+    g.set_root([root]);
     g.add_vertex_args(root, [a, c]);
     g.add_vertex_args(a, [b, d]);
     g.add_vertex_args(b, [a, c]);
@@ -271,7 +294,7 @@ fn dag_extractor() {
     let root = g.add_vertex(true, 0);
     let x = g.add_vertex(false, 100);
     let y = g.add_vertex(true, 0);
-    g.set_root(root);
+    g.set_root([root]);
     g.add_vertex_args(x, [y]);
     let assignment = DagExtractor::new(g).solve();
     assert_eq!(assignment, vec![true, false, false]);
@@ -281,7 +304,7 @@ fn dag_extractor() {
     let a = g.add_vertex(true, 1);
     let b = g.add_vertex(true, 0);
     let c = g.add_vertex(true, 0);
-    g.set_root(root);
+    g.set_root([root]);
     g.add_vertex_args(root, [a, b, c]);
     g.add_conflicting_group([a, b, c]);
     let mut extractor = DagExtractor::new(g);

@@ -2,11 +2,11 @@ mod nat;
 
 use dateg::{TokenOpaque, execute};
 
-use dateg_extractors_macro::index_dag;
+use dateg_extractors::dag::index_dag;
 use nat::*;
 
 #[test]
-fn dag_basic() {
+fn dag_basics() {
     let mut nat = Nat::default();
     let inc = nat.inc;
     let mul = nat.mul;

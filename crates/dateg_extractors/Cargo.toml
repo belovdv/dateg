@@ -10,4 +10,9 @@ ahash.workspace = true
 paste.workspace = true
 easy-smt.workspace = true
 anyhow.workspace = true
+log.workspace = true
 du_utils_timed = { git = "https://github.com/belovdv/du_utils.git", rev = "6adc494d430bfebe6debccf4dca9c38a69cbb1e6" }
+
+[dev-dependencies]
+env_logger.workspace = true
+rayon = "1"

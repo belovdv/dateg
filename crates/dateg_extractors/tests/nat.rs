@@ -56,13 +56,14 @@ theory!(Nat(
 ));
 
 impl Nat {
-    pub fn get_val(&mut self, val: usize) -> TokenOpaque<Expr> {
+    pub fn get_val(&self, val: usize) -> TokenOpaque<Expr> {
         let one = self.one;
         let inc = self.inc;
         let mut expr = self.eg.row_get(one, ()).unwrap();
-        for _ in 1..val {
-            expr = self.eg.row_get(inc, (expr,)).unwrap();
+        for v in 1..val {
+            let err = || panic!("{v}");
+            expr = self.eg.row_get(inc, (expr,)).unwrap_or_else(err);
         }
-        expr.canon(&mut self.eg)
+        expr.canon(&self.eg)
     }
 }

@@ -7,6 +7,8 @@ use dateg::*;
 
 use crate::dag::graph::VertexId;
 
+pub use dateg_extractors_macro::index_dag;
+
 pub trait Constructor: 'static {
     type Inputs: TokenTuple;
     type Output: TokenOpaqueMarker;
@@ -60,7 +62,7 @@ impl<Index: Default> Extractor<Index> {
         for consumed_by in self.consumers.values() {
             self.dag.add_conflicting_group(consumed_by.iter().copied());
         }
-        self.dag.set_root(self.values[&root.into_egglog()]);
+        self.dag.set_root([self.values[&root.into_egglog()]]);
         self.used = std::mem::take(&mut self.dag).solve();
         let mut index = Index::default();
         for collect in std::mem::take(&mut self.callbacks_collect).values() {
