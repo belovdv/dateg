@@ -62,8 +62,8 @@ impl<Index: Default> Extractor<Index> {
         for consumed_by in self.consumers.values() {
             self.dag.add_conflicting_group(consumed_by.iter().copied());
         }
-        self.dag.set_root([self.values[&root.into_egglog()]]);
-        self.used = std::mem::take(&mut self.dag).solve();
+        self.dag.set_roots([self.values[&root.into_egglog()]]);
+        self.used = self.dag.solve(graph::SolverConfig::MaxSat {});
         let mut index = Index::default();
         for collect in std::mem::take(&mut self.callbacks_collect).values() {
             (collect)(&self, eg, &mut index);
@@ -104,14 +104,14 @@ impl<Index: Default> Extractor<Index> {
                     .insert((fid, inputs.into_egglog_vec()), cstr);
                 assert!(was.is_none());
                 ext.dag
-                    .add_vertex_args(cstr, inputs.opaque_into_values().map(|v| ext.values[&v]));
+                    .add_edges(cstr, inputs.opaque_into_values().map(|v| ext.values[&v]));
                 options.entry(ext.values[&output]).or_default().push(cstr);
                 for consumed in C::consumes(inputs).map(|value| ext.values[&value]) {
                     ext.consumers.entry(consumed).or_default().insert(cstr);
                 }
             });
             for (value, constructors) in options {
-                ext.dag.add_vertex_args(value, constructors);
+                ext.dag.add_edges(value, constructors);
             }
         };
         self.callbacks_init_c.insert(tid, Box::new(init_c));

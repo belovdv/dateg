@@ -12,7 +12,9 @@ easy-smt.workspace = true
 anyhow.workspace = true
 log.workspace = true
 du_utils_timed = { git = "https://github.com/belovdv/du_utils.git", rev = "6adc494d430bfebe6debccf4dca9c38a69cbb1e6" }
+petgraph = "0.8.3"
 
 [dev-dependencies]
 env_logger.workspace = true
 rayon = "1"
+rand = "*"

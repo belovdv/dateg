@@ -87,7 +87,7 @@ fn dag_many_loops() {
         6, 6, 5,
     ];
     // Important: 14, 15, 23, 31
-    // Slow:
+    // Slow: 24, 23,  13,  29,  22
     let mut tests: Vec<_> = (1..=31).collect();
     if std::env::var("DATEG_TEST_DAG_FULL").is_ok() {
         execute! {nat;
