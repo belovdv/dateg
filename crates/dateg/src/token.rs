@@ -75,10 +75,14 @@ impl<T: Send + Sync + 'static> TokenOpaque<T> {
 }
 
 pub trait TokenOpaqueMarker: Token {
-    type Inner;
+    type Inner: Send + Sync + 'static;
+    fn as_token_opaque(self) -> TokenOpaque<Self::Inner>;
 }
 impl<T: Send + Sync + 'static> TokenOpaqueMarker for TokenOpaque<T> {
     type Inner = T;
+    fn as_token_opaque(self) -> TokenOpaque<Self::Inner> {
+        self
+    }
 }
 pub trait TokenPrimitiveMarker: Token {
     type Inner: BaseValue;

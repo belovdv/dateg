@@ -89,4 +89,14 @@ impl EGraph {
     pub fn for_each_row_untyped<S: Schema>(&self, table: Table<S>, mut f: impl FnMut(&[Value])) {
         self.inner.for_each(table.0, |entry| f(entry.vals));
     }
+
+    pub fn _dbg_definitions(&self, value: Value) {
+        for (name, fid) in self.tables.iter() {
+            self.inner.for_each(fid.1, |entry| {
+                if entry.vals.last() == Some(&value) {
+                    eprintln!("values is last in {name}");
+                }
+            });
+        }
+    }
 }

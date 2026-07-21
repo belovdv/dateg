@@ -16,7 +16,7 @@ pub trait Constructor: 'static {
     fn into_variant(_: Self::Inputs) -> Self::Enum;
     type Index;
     fn cost(_: Self::Inputs) -> Option<usize>;
-    fn consumes(_: Self::Inputs) -> impl Iterator<Item = Value> {
+    fn consumes(_: Self::Inputs) -> impl IntoIterator<Item = Value> {
         [].into_iter()
     }
 }
@@ -62,6 +62,10 @@ impl<Index: Default> Extractor<Index> {
         for consumed_by in self.consumers.values() {
             self.dag.add_conflicting_group(consumed_by.iter().copied());
         }
+        assert!(
+            root.as_token_opaque().canon(eg) == root.as_token_opaque(),
+            "please canonicalize root token"
+        );
         self.dag.set_roots([self.values[&root.into_egglog()]]);
         self.used = self.dag.solve(graph::SolverConfig::MaxSat {});
         let mut index = Index::default();
@@ -73,6 +77,20 @@ impl<Index: Default> Extractor<Index> {
 
     pub fn set_constructor<C: Constructor, S>(&mut self, table: Table<S>)
     where
+        Index: IndexFor<C::Output, Enum = C::Enum>,
+        S: Schema<Inputs = C::Inputs, Output = C::Output, AllowAdd = True>,
+    {
+        self.set_constructor_ext::<C, S>(table, C::cost, |is| {
+            C::consumes(is).into_iter().collect()
+        });
+    }
+
+    pub fn set_constructor_ext<C: Constructor, S>(
+        &mut self,
+        table: Table<S>,
+        custom_cost: impl Fn(C::Inputs) -> Option<usize> + Send + Sync + 'static,
+        custom_consumes: impl Fn(C::Inputs) -> Vec<Value> + Send + Sync + 'static,
+    ) where
         Index: IndexFor<C::Output, Enum = C::Enum>,
         S: Schema<Inputs = C::Inputs, Output = C::Output, AllowAdd = True>,
     {
@@ -95,7 +113,7 @@ impl<Index: Default> Extractor<Index> {
                 if inputs.opaque_into_values().any(|val| val == output) {
                     return;
                 }
-                let Some(cost) = C::cost(inputs) else {
+                let Some(cost) = custom_cost(inputs) else {
                     return;
                 };
                 let cstr = ext.dag.add_vertex(true, cost);
@@ -106,7 +124,10 @@ impl<Index: Default> Extractor<Index> {
                 ext.dag
                     .add_edges(cstr, inputs.opaque_into_values().map(|v| ext.values[&v]));
                 options.entry(ext.values[&output]).or_default().push(cstr);
-                for consumed in C::consumes(inputs).map(|value| ext.values[&value]) {
+                for consumed in custom_consumes(inputs)
+                    .into_iter()
+                    .map(|value| ext.values[&value])
+                {
                     ext.consumers.entry(consumed).or_default().insert(cstr);
                 }
             });

@@ -45,7 +45,7 @@ pub fn index_tree(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///     index_field1: TypeForEnumOfResultsName1 (datatype EGraphValueOpaque1
 ///         Constructor1 (Arg1 Arg2 Arg3)
 ///         Constructor2 ()
-///             { |inputs, index| cost_expression(using index on opaque inputs) }
+///             { |inputs| cost_expression(using index on opaque inputs) }
 ///             { |inputs| selection of opaque inputs to be considered consumed }
 ///     )
 /// )
@@ -102,7 +102,7 @@ macro_rules! ensure {
     };
     ($cond:expr, $span:expr) => {
         if !$cond {
-            return err!($span, "{}", stringify!($expr));
+            return err!($span, "{}", stringify!($cond));
         }
     };
 }

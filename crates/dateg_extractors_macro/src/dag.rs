@@ -33,7 +33,9 @@ pub fn emit(input: &Input) -> Result<TokenStream> {
                         let inputs = closure.inputs.get(0).unwrap();
                         let body = &closure.body;
                         consumes = Some(quote! {
-                            fn cost(#inputs: Self::Inputs) -> Option<usize> { #body }
+                            fn consumes(
+                                #inputs: Self::Inputs
+                            ) -> impl IntoIterator<Item = dateg::Value> { #body }
                         });
                     }
                     Ok(quote! {
