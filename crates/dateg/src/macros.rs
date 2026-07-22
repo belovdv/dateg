@@ -125,7 +125,7 @@ macro_rules! theory {
         ($(($sort_kind:ident $Sort:ident))*)
         ($(($action:tt $name:tt $($prog:tt)*))*)
         ($(($action_extra:tt $($prog_extra:tt)*))*)
-        $({$($post_init:tt)*})?
+        $({$self_:ident; $($post_init:tt)*})?
     ) => {
         $( $crate::helper!(@highlight_ty $action); )*
         $( $crate::helper!(@highlight_ty $action_extra); )*
@@ -142,6 +142,17 @@ macro_rules! theory {
                 let mut r = Self { eg, $($name),* };
                 $( let $self_ = &mut r; {$($post_init)*} )?
                 r
+            }
+        }
+
+        impl $Theory {
+            pub fn init_egraph(eg: &mut dateg::EGraph) {
+                eg.set_ruleset_active("");
+                $crate::theory!(@sort_init ty eg; ());
+                $( $crate::theory!(@sort_init $sort_kind eg; $Sort); )*
+                $( $crate::execute!(@eg; $action $name $($prog)*); )*
+                $( $crate::execute!(@eg; $action_extra $($prog_extra)*); )*
+                eg.set_ruleset_active("");
             }
         }
 
