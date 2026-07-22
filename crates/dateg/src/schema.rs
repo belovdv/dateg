@@ -34,7 +34,7 @@ pub trait TokenTuple: Copy + Eq + Hash + Send + Sync + 'static {
     type Entries: IntoEntries;
 
     fn type_ids() -> impl Iterator<Item = TypeId>;
-    fn opaque_into_values(self) -> impl Iterator<Item = Value>;
+    fn into_non_primitive(self) -> impl Iterator<Item = Value>;
 }
 pub trait IntoEntries {
     fn into_entries(self, rb: &mut RuleBuilder) -> Vec<QueryEntry>;
@@ -57,6 +57,16 @@ impl<T: Send + Sync + 'static> TokenPartialResolve for TokenOpaque<T> {
     type Resolved = Self;
     fn partial_resolve(self, _: &ExecutionState) -> Self::Resolved {
         self
+    }
+}
+impl<T: ContainerValueExt> TokenPartialResolve for TokenContainer<T> {
+    type Resolved = T;
+    fn partial_resolve(self, es: &ExecutionState) -> Self::Resolved {
+        // Is it possible to avoid cloning?
+        es.container_values()
+            .get_val::<T>(self.into_egglog())
+            .unwrap()
+            .clone()
     }
 }
 
@@ -87,10 +97,10 @@ macro_rules! impl_tt {
             fn type_ids() -> impl Iterator<Item = TypeId> {
                 [$(TypeId::of::<$T>()),*].into_iter()
             }
-            fn opaque_into_values(self) -> impl Iterator<Item = Value> {
+            fn into_non_primitive(self) -> impl Iterator<Item = Value> {
                 #[allow(non_snake_case)]
                 let ($($T,)*) = self;
-                <[Option<Value>; _]>::into_iter([$($T.as_opaque()),*]).flatten()
+                <[Option<Value>; _]>::into_iter([$($T.as_non_primitive()),*]).flatten()
             }
         }
         #[allow(unused)]

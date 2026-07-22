@@ -1,11 +1,13 @@
 #![allow(unused)]
 
-use dateg::{EGraph, Token, TokenOpaque, TokenPrimitive, execute, theory};
+use dateg::{ContainerVec, EGraph, Token, TokenOpaque, TokenPrimitive, execute, theory};
 
+pub type Expressions = ContainerVec<Expr>;
 theory!(Nat(
+    (ty String)
     (sort Expr)
     (sort ExprTuple)
-    (ty String)
+    (container Expressions)
 )(
     (constructor inc (Expr) Expr)
     (constructor mul (Expr Expr) Expr)
@@ -17,6 +19,10 @@ theory!(Nat(
     (constructor expr0 () ExprTuple)
     (constructor expr1 (Expr) ExprTuple)
     (constructor expr2 (Expr Expr) ExprTuple)
+    (constructor expr_v (String Expressions) Expr)
+    (evaluation expr0_v () Expressions { |()| ContainerVec(vec![]) })
+    (evaluation expr1_v (Expr) Expressions { |(a,)| ContainerVec(vec![a]) })
+    (evaluation expr2_v (Expr Expr) Expressions { |(a, b)| ContainerVec(vec![a, b]) })
 
     (relation is_comas (String))
 
@@ -34,6 +40,9 @@ theory!(Nat(
     (birewrite (square x)   (expr {s_square} (expr1 x)))
     (birewrite (mul x y)    (expr {s_mul} (expr2 x y)))
     (birewrite (add x y)    (expr {s_add} (expr2 x y)))
+    (rewrite (expr s (expr0)) (expr_v s (expr0_v)))
+    (rewrite (expr s (expr1 a)) (expr_v s (expr1_v a)))
+    (rewrite (expr s (expr2 a b)) (expr_v s (expr2_v a b)))
 
     (rewrite
         (expr name (expr2 x y))

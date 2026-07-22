@@ -3,7 +3,11 @@ use super::*;
 const CFG: Config = Config::Dag;
 
 pub fn emit(input: &Input) -> Result<TokenStream> {
-    let Input { index, enums } = input;
+    let Input {
+        index,
+        enums,
+        containers,
+    } = input;
 
     let fields = enums.iter().map(|e| {
         let field = &e.field;
@@ -91,6 +95,8 @@ pub fn emit(input: &Input) -> Result<TokenStream> {
         });
         quote! { (#(#names),*): (#(#types),*), }
     });
+    let extract_args2 = extract_args.clone();
+    let extract_args1 = extract_args;
     let extract_set = enums
         .iter()
         .enumerate()
@@ -102,7 +108,12 @@ pub fn emit(input: &Input) -> Result<TokenStream> {
                 quote! { r.set_constructor::<#cs, _>(#name); }
             })
         })
-        .flatten();
+        .flatten()
+        .chain(containers.iter().map(|c| {
+            quote! { r.set_container::<#c>(); }
+        }));
+    let extract_set2 = extract_set.clone();
+    let extract_set1 = extract_set;
 
     Ok(quote! {
         #[derive(Default)]
@@ -111,9 +122,18 @@ pub fn emit(input: &Input) -> Result<TokenStream> {
         }
         #(#per_datatype)*
         impl #index {
-            pub fn extract(eg: &dateg::EGraph, root: impl dateg::TokenOpaqueMarker, #(#extract_args)*) -> Self {
+            pub fn extractor(
+                eg: &dateg::EGraph, root: impl dateg::TokenOpaqueMarker, #(#extract_args1)*
+            ) -> dateg_extractors::dag::Extractor::<Self> {
                 let mut r = dateg_extractors::dag::Extractor::<Self>::default();
-                #(#extract_set)*
+                #(#extract_set1)*
+                r
+            }
+            pub fn extract(
+                eg: &dateg::EGraph, root: impl dateg::TokenOpaqueMarker, #(#extract_args2)*
+            ) -> Self {
+                let mut r = dateg_extractors::dag::Extractor::<Self>::default();
+                #(#extract_set2)*
                 r.extract(eg, root)
             }
         }

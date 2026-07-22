@@ -66,6 +66,9 @@ macro_rules! execute {
         #[cfg(false)] fn $table() {}
         $eg.row_set($table, ($($args,)*), $crate::token_unit());
     };
+    (@$eg:expr; container $name:ident ($T:ident) {$val:expr}) => {
+        let $name = $eg.add_container_value::<$T>($val);
+    };
 
     // Ruleset
     (@$eg:expr; set_ruleset_active $name:literal) => {
@@ -169,9 +172,13 @@ macro_rules! theory {
         }
     };
     (@sort_define ty $Sort:ident) => {};
+    (@sort_define container $Sort:ident) => {};
     (@sort_init sort $eg:expr; $Sort:ident) => {};
     (@sort_init ty $eg:expr; $Sort:ty) => {
         $eg.add_primitive_type::<$Sort>();
+    };
+    (@sort_init container $eg:expr; $Sort:ident) => {
+        $eg.add_container_type::<$Sort>();
     };
 
     // Field type dispatch

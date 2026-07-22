@@ -1,5 +1,5 @@
 use ahash::AHashSet;
-use dateg::{execute, rule, theory};
+use dateg::{ContainerVec, execute, rule, theory};
 
 theory!(Arithmetic(
     (sort Expr)
@@ -337,4 +337,66 @@ fn merge() {
     while ps.run_ruleset_active() {}
     let v4 = v4.canon(&ps);
     assert_eq!(ps.row_get(path, (v2, v4)).unwrap().get(&ps), 1);
+}
+
+#[test]
+fn container() {
+    type CU = ContainerVec<Int>;
+    theory!(TC(
+        (ty usize)
+        (sort Int)
+        (container CU)
+    )()());
+
+    let mut tc = TC::default();
+
+    execute! {tc;
+        (constructor x () Int)
+        (constructor y () Int)
+        (constructor v (CU) Int)
+
+        (evaluation_partial ensure_len_leq (CU usize) () { |(c, b)| (c.0.len() <= b).then(|| ()) })
+        (evaluation_partial ensure_non_empty (CU) () { |(c,)| (!c.0.is_empty()).then(|| ()) })
+        (evaluation_partial get (CU usize) Int { |(c, v)| c.0.get(v).copied() })
+        (evaluation push (CU Int) CU { |(mut c, v)| { c.0.push(v); c } })
+    }
+
+    let c0 = tc.add_primitive_value::<usize>(0);
+    let c2 = tc.add_primitive_value::<usize>(2);
+
+    execute! {tc;
+        (rule
+            (query val (v vec))
+            (query _ (ensure_len_leq vec {c2}))
+            (query _ (ensure_non_empty vec))
+            (query first (get vec {c0}))
+            (uni val (v (push vec first)))
+        )
+    }
+
+    let x = tc.row_add(x, ());
+    let y = tc.row_add(y, ());
+
+    let c_ = tc.add_container_value(ContainerVec::<Int>(vec![]));
+    let c_x = tc.add_container_value(ContainerVec::<Int>(vec![x]));
+    let c_x_y_x = tc.add_container_value(ContainerVec::<Int>(vec![x, y, x]));
+    let c_x_x_x = tc.add_container_value(ContainerVec::<Int>(vec![x, x, x]));
+
+    let v_ = tc.row_add(v, (c_,));
+    let v_x = tc.row_add(v, (c_x,));
+    let v_x_x_x = tc.row_add(v, (c_x_x_x,));
+    let v_x_y_x = tc.row_add(v, (c_x_y_x,));
+
+    assert!(v_x.canon(&tc) != v_x_x_x.canon(&tc));
+    while tc.run_ruleset_active() {}
+    assert!(v_x.canon(&tc) == v_x_x_x.canon(&tc));
+
+    assert!(v_.canon(&tc) != v_x.canon(&tc));
+    assert!(v_x.canon(&tc) != v_x_y_x.canon(&tc));
+
+    execute! {tc; (rule (uni {x} {y})) }
+    while tc.run_ruleset_active() {}
+
+    assert!(v_.canon(&tc) != v_x.canon(&tc));
+    assert!(v_x_x_x.canon(&tc) == v_x_y_x.canon(&tc));
 }

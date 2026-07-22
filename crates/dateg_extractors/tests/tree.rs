@@ -103,7 +103,7 @@ fn concrete() {
             IFC2One ()
             IFC2Inc (Expr)
             IFC2Mul (Expr Expr)
-            IFC2Square (Expr) {|(arg,), index| Some(2 + index.cost(arg)?) }
+            IFC2Square (Expr) {|(arg,), index, eg| Some(2 + index.cost(arg, eg)?) }
         )
     );
     let index_full_c2 = IndexFullC2::extract(&nat, (one, inc, mul, square));
@@ -112,7 +112,7 @@ fn concrete() {
             IFC3One ()
             IFC3Inc (Expr)
             IFC3Mul (Expr Expr)
-            IFC3Square (Expr) {|(arg,), index| Some(3 + index.cost(arg)?) }
+            IFC3Square (Expr) {|(arg,), index, eg| Some(3 + index.cost(arg, eg)?) }
         )
     );
     let index_full_c3 = IndexFullC3::extract(&nat, (one, inc, mul, square));
@@ -180,6 +180,56 @@ fn generic() {
                         )
                     }
                 },
+            }
+        }
+    }
+
+    let e15 = nat.get_val(15);
+    let r = index.expr_to_string(&nat, e15);
+    assert_eq!(r, "(mul (inc (square (inc (one)))) (inc (inc (one))))");
+}
+
+#[test]
+fn generic_vec() {
+    let mut nat = Nat::default();
+    let inc = nat.inc;
+    let mul = nat.mul;
+    let one = nat.one;
+    let expr_v = nat.expr_v;
+    execute! {nat;
+        (add e1 (one))
+        (add e2 (inc e1))
+        (add e4 (mul e2 e2))
+        (add e16 (mul e4 e4))
+    }
+    while nat.run_ruleset("") {}
+
+    index_tree!(Index
+        expr: EExpr (datatype Expr
+            ExprAny (String Expressions)
+        )
+        [Expressions] // Unnecessary
+    );
+
+    let index = Index::extract(&nat, expr_v);
+
+    impl Index {
+        fn expr_to_string(&self, nat: &EGraph, expr: TokenOpaque<Expr>) -> String {
+            match self.value(expr) {
+                EExpr::ExprAny(op, args) => {
+                    let v = args.get(nat);
+                    match &v.0[..] {
+                        [] => format!("({})", op.get(nat)),
+                        &[a] => format!("({} {})", op.get(nat), self.expr_to_string(nat, a)),
+                        &[a, b] => format!(
+                            "({} {} {})",
+                            op.get(nat),
+                            self.expr_to_string(nat, a),
+                            self.expr_to_string(nat, b),
+                        ),
+                        [..] => panic!("{}", v.0.len()),
+                    }
+                }
             }
         }
     }

@@ -73,6 +73,7 @@ enum Config {
 struct Input {
     index: Ident,
     enums: Vec<Enum>,
+    containers: Vec<Ident>,
 }
 struct Enum {
     field: Ident,
@@ -126,15 +127,17 @@ impl Constructor {
                 ensure_closure_is_simple(closure)?;
                 let input = match cfg {
                     Config::Tree => {
-                        ensure!(closure.inputs.len() == 2, closure.span());
+                        ensure!(closure.inputs.len() == 3, closure.span());
                         let inputs = closure.inputs.get(0).unwrap();
                         let index = closure.inputs.get(1).unwrap();
-                        quote! { #inputs: Self::Inputs, #index: &Self::Index }
+                        let eg = closure.inputs.get(2).unwrap();
+                        quote! { #inputs: Self::Inputs, #index: &Self::Index, #eg: &dateg::EGraph }
                     }
                     Config::Dag => {
-                        ensure!(closure.inputs.len() == 1, closure.span());
+                        ensure!(closure.inputs.len() == 2, closure.span());
                         let inputs = closure.inputs.get(0).unwrap();
-                        quote! { #inputs: Self::Inputs }
+                        let eg = closure.inputs.get(1).unwrap();
+                        quote! { #inputs: Self::Inputs, #eg: &dateg::EGraph }
                     }
                 };
                 (input, closure.body.clone().into_token_stream())
@@ -143,19 +146,24 @@ impl Constructor {
                 Config::Tree => {
                     let inputs = Ident::new("inputs", self.constructor.span());
                     let index = Ident::new("index", self.constructor.span());
+                    let eg = Ident::new("eg", self.constructor.span());
                     let args = generate_unique_identifiers(&self.args, "t");
                     let body = quote! {{
                         let mut r = 1;
                         #[allow(non_snake_case)]
                         let (#(#args,)*) = #inputs;
                         use dateg_extractors::tree::CostFor;
-                        #( r += #index.cost(#args)?; )*
+                        #( r += #index.cost(#args, #eg)?; )*
                         Some(r)
                     }};
-                    let input = quote! { #inputs: Self::Inputs, #index: &Self::Index };
+                    let input =
+                        quote! { #inputs: Self::Inputs, #index: &Self::Index, #eg: &dateg::EGraph };
                     (input, body)
                 }
-                Config::Dag => (quote! { _: Self::Inputs }, quote! { Some(1) }),
+                Config::Dag => (
+                    quote! { _: Self::Inputs, _: &dateg::EGraph },
+                    quote! { Some(1) },
+                ),
             },
         };
         Ok(quote! { #[allow(unused)] fn cost(#input) -> Option<usize> { #body } })

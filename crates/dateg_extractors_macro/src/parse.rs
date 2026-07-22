@@ -4,10 +4,22 @@ impl Parse for Input {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let index = input.parse()?;
         let mut enums = vec![];
-        while !input.is_empty() {
+        while !input.is_empty() && !input.peek(syn::token::Bracket) {
             enums.push(input.parse()?);
         }
-        Ok(Self { index, enums })
+        let mut containers = vec![];
+        if !input.is_empty() {
+            let content;
+            syn::bracketed!(content in input);
+            while !content.is_empty() {
+                containers.push(content.parse()?);
+            }
+        }
+        Ok(Self {
+            index,
+            enums,
+            containers,
+        })
     }
 }
 impl Parse for Enum {

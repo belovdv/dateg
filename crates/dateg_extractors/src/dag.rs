@@ -15,7 +15,7 @@ pub trait Constructor: 'static {
     type Enum: Eq;
     fn into_variant(_: Self::Inputs) -> Self::Enum;
     type Index;
-    fn cost(_: Self::Inputs) -> Option<usize>;
+    fn cost(_: Self::Inputs, _: &dateg::EGraph) -> Option<usize>;
     fn consumes(_: Self::Inputs) -> impl IntoIterator<Item = Value> {
         [].into_iter()
     }
@@ -88,7 +88,7 @@ impl<Index: Default> Extractor<Index> {
     pub fn set_constructor_ext<C: Constructor, S>(
         &mut self,
         table: Table<S>,
-        custom_cost: impl Fn(C::Inputs) -> Option<usize> + Send + Sync + 'static,
+        custom_cost: impl Fn(C::Inputs, &dateg::EGraph) -> Option<usize> + Send + Sync + 'static,
         custom_consumes: impl Fn(C::Inputs) -> Vec<Value> + Send + Sync + 'static,
     ) where
         Index: IndexFor<C::Output, Enum = C::Enum>,
@@ -99,9 +99,8 @@ impl<Index: Default> Extractor<Index> {
 
         let init_v = move |ext: &mut Self, eg: &EGraph| {
             eg.for_each_row(table, |_, output| {
-                ext.values
-                    .entry(output.into_egglog())
-                    .or_insert_with(|| ext.dag.add_vertex(false, 0));
+                let add_v = || ext.dag.add_vertex(false, 0);
+                ext.values.entry(output.into_egglog()).or_insert_with(add_v);
             });
         };
         self.callbacks_init_v.insert(tid, Box::new(init_v));
@@ -110,10 +109,13 @@ impl<Index: Default> Extractor<Index> {
             let mut options: AHashMap<VertexId, Vec<VertexId>> = Default::default();
             eg.for_each_row(table, |inputs, output| {
                 let output = output.into_egglog();
-                if inputs.opaque_into_values().any(|val| val == output) {
+                if inputs
+                    .into_non_primitive()
+                    .any(|val| val == output || !ext.values.contains_key(&val))
+                {
                     return;
                 }
-                let Some(cost) = custom_cost(inputs) else {
+                let Some(cost) = custom_cost(inputs, eg) else {
                     return;
                 };
                 let cstr = ext.dag.add_vertex(true, cost);
@@ -122,7 +124,7 @@ impl<Index: Default> Extractor<Index> {
                     .insert((fid, inputs.into_egglog_vec()), cstr);
                 assert!(was.is_none());
                 ext.dag
-                    .add_edges(cstr, inputs.opaque_into_values().map(|v| ext.values[&v]));
+                    .add_edges(cstr, inputs.into_non_primitive().map(|v| ext.values[&v]));
                 options.entry(ext.values[&output]).or_default().push(cstr);
                 for consumed in custom_consumes(inputs)
                     .into_iter()
@@ -148,5 +150,36 @@ impl<Index: Default> Extractor<Index> {
             });
         };
         self.callbacks_collect.insert(tid, Box::new(collect));
+    }
+
+    pub fn set_container<C: ContainerValueExt>(&mut self) {
+        let tid = TypeId::of::<C>();
+
+        let init_v = move |ext: &mut Self, eg: &EGraph| {
+            eg._inner().container_values().for_each::<C>(|_, v| {
+                let add_v = || ext.dag.add_vertex(false, 0);
+                ext.values.entry(v).or_insert_with(add_v);
+            });
+        };
+        self.callbacks_init_v.insert(tid, Box::new(init_v));
+
+        let init_c = move |ext: &mut Self, eg: &EGraph| {
+            let mut options: AHashMap<VertexId, Vec<VertexId>> = Default::default();
+            eg._inner()
+                .container_values()
+                .for_each::<C>(|inputs, output| {
+                    if ContainerValue::iter(inputs).any(|input| input == output) {
+                        return;
+                    }
+                    let cont = ext.dag.add_vertex(true, 0);
+                    ext.dag
+                        .add_edges(cont, ContainerValue::iter(inputs).map(|v| ext.values[&v]));
+                    options.entry(ext.values[&output]).or_default().push(cont);
+                });
+            for (value, container) in options {
+                ext.dag.add_edges(value, container);
+            }
+        };
+        self.callbacks_init_c.insert(tid, Box::new(init_c));
     }
 }

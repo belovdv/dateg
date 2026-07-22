@@ -93,7 +93,7 @@ theory!(Memory(
 index_dag!(Index
     mem: EMem (datatype Mem
         Init ()
-        Store (Mem Int Int) { |_| Some(1) } { |(mem, ..)| [mem.into_egglog()] }
+        Store (Mem Int Int) { |_, _| Some(1) } { |(mem, ..)| [mem.into_egglog()] }
     )
     pair: EPair (datatype Pair
         Load (Mem Int)

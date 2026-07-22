@@ -20,7 +20,7 @@ pub use token::*;
 pub use utils::*;
 
 pub use egglog_bridge::{FunctionId, RuleId};
-pub use egglog_core_relations::{BaseValue, Value};
+pub use egglog_core_relations::{BaseValue, ContainerValue, Value, ValueRebuilder};
 
 pub use dateg_macro::rule;
 
@@ -38,6 +38,13 @@ impl EGraph {
     }
     pub fn add_primitive_value<V: BaseValue>(&mut self, value: V) -> TokenPrimitive<V> {
         TokenPrimitive::from_egglog(self.inner.base_values_mut().get(value))
+    }
+
+    pub fn add_container_type<C: ContainerValue>(&mut self) {
+        self.inner.register_container_ty::<C>();
+    }
+    pub fn add_container_value<C: ContainerValueExt>(&mut self, c: C) -> TokenContainer<C> {
+        TokenContainer::from_egglog(self.inner.get_container_value(c))
     }
 
     pub fn _inner(&self) -> &egglog_bridge::EGraph {

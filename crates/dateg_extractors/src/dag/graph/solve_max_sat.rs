@@ -61,9 +61,12 @@ impl<'a> DagExtractor<'a> {
                 }
 
                 let requirement = if !var.is_all {
-                    assert!(g.neighbors(node).count() > 0);
-                    r.ctx
-                        .or_many(g.neighbors(node).map(|ni| r.vars[ni.index()]))
+                    if g.neighbors(node).count() > 0 {
+                        r.ctx
+                            .or_many(g.neighbors(node).map(|ni| r.vars[ni.index()]))
+                    } else {
+                        r.ctx.atoms().f
+                    }
                 } else if g.neighbors(node).count() > 0 {
                     r.ctx
                         .and_many(g.neighbors(node).map(|ni| r.vars[ni.index()]))

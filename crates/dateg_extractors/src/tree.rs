@@ -11,11 +11,11 @@ pub trait Constructor: 'static {
     type Enum: Eq;
     fn into_variant(_: Self::Inputs) -> Self::Enum;
     type Index;
-    fn cost(_: Self::Inputs, index: &Self::Index) -> Option<usize>;
+    fn cost(_: Self::Inputs, index: &Self::Index, eg: &dateg::EGraph) -> Option<usize>;
 }
 
 pub trait CostFor<T: Token> {
-    fn cost(&self, t: T) -> Option<usize>;
+    fn cost(&self, t: T, eg: &EGraph) -> Option<usize>;
 }
 
 pub trait IndexFor<Token: TokenOpaqueMarker> {
@@ -74,7 +74,7 @@ impl<Index: Default> Extractor<Index> {
             Box::new(move |index, eg| {
                 let mut updated = false;
                 eg.for_each_row(table, |inputs, output| {
-                    if let Some(cost) = C::cost(inputs, index) {
+                    if let Some(cost) = C::cost(inputs, index, eg) {
                         updated |= index.update(output, cost, C::into_variant(inputs));
                     };
                 });
@@ -85,12 +85,20 @@ impl<Index: Default> Extractor<Index> {
 }
 
 impl<T: BaseValue, I> CostFor<TokenPrimitive<T>> for I {
-    fn cost(&self, _: TokenPrimitive<T>) -> Option<usize> {
+    fn cost(&self, _: TokenPrimitive<T>, _: &EGraph) -> Option<usize> {
         Some(0)
     }
 }
 impl<T: Send + Sync + 'static, Index: IndexFor<TokenOpaque<T>>> CostFor<TokenOpaque<T>> for Index {
-    fn cost(&self, t: TokenOpaque<T>) -> Option<usize> {
+    fn cost(&self, t: TokenOpaque<T>, _: &EGraph) -> Option<usize> {
         self.get_map().get(&t).map(|(cost, _)| *cost)
+    }
+}
+impl<T: ContainerValueExt, Index: IndexFor<T::Element>> CostFor<TokenContainer<T>> for Index {
+    fn cost(&self, t: TokenContainer<T>, eg: &EGraph) -> Option<usize> {
+        let map = self.get_map();
+        ContainerValueExt::iter(&*t.get(eg))
+            .map(|t| map.get(&t).map(|(cost, _)| *cost))
+            .fold(Some(0), |was, new| Some(was? + new?))
     }
 }

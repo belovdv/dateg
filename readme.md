@@ -2,7 +2,7 @@
 
 Alternative interface to [egglog](https://github.com/egraphs-good/egglog), built on top of `egglog-bridge`.
 
-Status: ready to work (covers my use case), moderately tested, lacks some features (primarily containers)
+Status: ready to work (covers my use case), moderately tested, likely lacks some features
 
 Motivational feature: typed interface:
 - simpler access to data (primitives)

@@ -3,7 +3,7 @@ use super::*;
 const CFG: Config = Config::Tree;
 
 pub fn emit(input: &Input) -> Result<TokenStream> {
-    let Input { index, enums } = input;
+    let Input { index, enums, .. } = input;
 
     let fields = enums.iter().map(|e| {
         let field = &e.field;
