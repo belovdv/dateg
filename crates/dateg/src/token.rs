@@ -198,19 +198,97 @@ where
 
 impl<T: BaseValue> std::fmt::Debug for TokenPrimitive<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}({})", stn::<T>(), self.0.index()))
+        f.write_fmt(format_args!("{}({})", SN::<T>(PhantomData), self.0.index()))
     }
 }
 impl<T: Send + Sync + 'static> std::fmt::Debug for TokenOpaque<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}({})", stn::<T>(), self.0.index()))
+        f.write_fmt(format_args!("{}({})", SN::<T>(PhantomData), self.0.index()))
     }
 }
 impl<T: ContainerValueExt> std::fmt::Debug for TokenContainer<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}({})", stn::<T>(), self.0.index()))
+        f.write_fmt(format_args!("{}({})", SN::<T>(PhantomData), self.0.index()))
     }
 }
-fn stn<T>() -> &'static str {
-    std::any::type_name::<T>().split("::").last().unwrap()
+
+// Copied from bevy https://docs.rs/disqualified/latest/src/disqualified/short_name.rs.html
+
+struct SN<T>(PhantomData<T>);
+
+impl<T> core::fmt::Display for SN<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let full_name = core::any::type_name::<T>();
+        // Generics result in nested paths within <..> blocks.
+        // Consider "bevy_render::camera::camera::extract_cameras<bevy_render::camera::bundle::Camera3d>".
+        // To tackle this, we parse the string from left to right, collapsing as we go.
+        let mut index: usize = 0;
+        let end_of_string = full_name.len();
+
+        while index < end_of_string {
+            let rest_of_string = full_name.get(index..end_of_string).unwrap_or_default();
+
+            // Collapse everything up to the next special character,
+            // then skip over it
+            if let Some(special_character_index) = rest_of_string.find(|c: char| {
+                (c == ' ')
+                    || (c == '<')
+                    || (c == '>')
+                    || (c == '(')
+                    || (c == ')')
+                    || (c == '[')
+                    || (c == ']')
+                    || (c == ',')
+                    || (c == ';')
+            }) {
+                let segment_to_collapse = rest_of_string
+                    .get(0..special_character_index)
+                    .unwrap_or_default();
+
+                f.write_str(collapse_type_name(segment_to_collapse))?;
+
+                // Insert the special character
+                let special_character =
+                    &rest_of_string[special_character_index..=special_character_index];
+
+                f.write_str(special_character)?;
+
+                match special_character {
+                    ">" | ")" | "]"
+                        if rest_of_string[special_character_index + 1..].starts_with("::") =>
+                    {
+                        f.write_str("::")?;
+                        // Move the index past the "::"
+                        index += special_character_index + 3;
+                    }
+                    // Move the index just past the special character
+                    _ => index += special_character_index + 1,
+                }
+            } else {
+                // If there are no special characters left, we're done!
+                f.write_str(collapse_type_name(rest_of_string))?;
+                index = end_of_string;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[inline(always)]
+fn collapse_type_name(string: &str) -> &str {
+    // Enums types are retained.
+    // As heuristic, we assume the enum type to be uppercase.
+    let mut segments = string.rsplit("::");
+    let (last, second_last): (&str, Option<&str>) = (segments.next().unwrap(), segments.next());
+    let Some(second_last) = second_last else {
+        return last;
+    };
+
+    if second_last.starts_with(char::is_uppercase) {
+        let index = string.len() - last.len() - second_last.len() - 2;
+        &string[index..]
+    } else {
+        last
+    }
 }
