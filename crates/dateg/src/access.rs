@@ -20,11 +20,12 @@ impl EGraph {
     pub fn row_add<S>(&mut self, table: Table<S>, key: S::Inputs) -> S::Output
     where
         S: Schema<AllowAdd = True>,
+        S::Output: TokenOpaqueMarker,
     {
         let mut loader = self.loader(table);
         let r = loader.add(key);
         loader.flush();
-        r
+        r.canon(self)
     }
 }
 

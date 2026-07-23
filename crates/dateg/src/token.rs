@@ -60,17 +60,21 @@ impl<T: Send + Sync+'static> Token for TokenOpaque<T> {
 }
 
 impl<T: Send + Sync + 'static> TokenOpaque<T> {
-    pub fn canon(&self, eg: &crate::EGraph) -> Self {
+    pub fn canon(self, eg: &crate::EGraph) -> Self {
         Self::from_egglog(eg.inner.get_canon_repr(self.0, ColumnTy::Id))
     }
 }
 
 pub trait TokenOpaqueMarker: Token {
     fn as_token_opaque(self) -> TokenOpaque<Self::Value>;
+    fn canon(self, eg: &crate::EGraph) -> Self;
 }
 impl<T: Send + Sync + 'static> TokenOpaqueMarker for TokenOpaque<T> {
     fn as_token_opaque(self) -> TokenOpaque<Self::Value> {
         self
+    }
+    fn canon(self, eg: &crate::EGraph) -> Self {
+        TokenOpaque::canon(self, eg)
     }
 }
 
