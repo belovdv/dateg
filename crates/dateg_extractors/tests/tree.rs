@@ -165,21 +165,20 @@ fn generic() {
 
     impl Index {
         fn expr_to_string(&self, nat: &EGraph, expr: TokenOpaque<Expr>) -> String {
-            match self.value(expr) {
-                EExpr::ExprAny(op, args) => match self.value(args) {
-                    EExprTuple::Expr0() => format!("({})", op.get(nat)),
-                    EExprTuple::Expr1(a) => {
-                        format!("({} {})", op.get(nat), self.expr_to_string(nat, a))
-                    }
-                    EExprTuple::Expr2(a, b) => {
-                        format!(
-                            "({} {} {})",
-                            op.get(nat),
-                            self.expr_to_string(nat, a),
-                            self.expr_to_string(nat, b),
-                        )
-                    }
-                },
+            let EExpr(op, args) = self.value(expr);
+            match self.value(args) {
+                EExprTuple::Expr0() => format!("({})", op.get(nat)),
+                EExprTuple::Expr1(a) => {
+                    format!("({} {})", op.get(nat), self.expr_to_string(nat, a))
+                }
+                EExprTuple::Expr2(a, b) => {
+                    format!(
+                        "({} {} {})",
+                        op.get(nat),
+                        self.expr_to_string(nat, a),
+                        self.expr_to_string(nat, b),
+                    )
+                }
             }
         }
     }
@@ -215,21 +214,18 @@ fn generic_vec() {
 
     impl Index {
         fn expr_to_string(&self, nat: &EGraph, expr: TokenOpaque<Expr>) -> String {
-            match self.value(expr) {
-                EExpr::ExprAny(op, args) => {
-                    let v = args.get(nat);
-                    match &v.0[..] {
-                        [] => format!("({})", op.get(nat)),
-                        &[a] => format!("({} {})", op.get(nat), self.expr_to_string(nat, a)),
-                        &[a, b] => format!(
-                            "({} {} {})",
-                            op.get(nat),
-                            self.expr_to_string(nat, a),
-                            self.expr_to_string(nat, b),
-                        ),
-                        [..] => panic!("{}", v.0.len()),
-                    }
-                }
+            let EExpr(op, args) = self.value(expr);
+            let v = args.get(nat);
+            match &v.0[..] {
+                [] => format!("({})", op.get(nat)),
+                &[a] => format!("({} {})", op.get(nat), self.expr_to_string(nat, a)),
+                &[a, b] => format!(
+                    "({} {} {})",
+                    op.get(nat),
+                    self.expr_to_string(nat, a),
+                    self.expr_to_string(nat, b),
+                ),
+                [..] => panic!("{}", v.0.len()),
             }
         }
     }

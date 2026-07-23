@@ -144,13 +144,10 @@ impl IndexToString<'_> {
         if let Some(id) = self.v.get(&t.into_egglog()) {
             return *id;
         }
-        let id = match self.index.value(t) {
-            EPair::Load(mem, addr) => {
-                let mem = self.mem(mem);
-                let addr = self.int(addr);
-                self.push(format!("load {mem} {addr}"))
-            }
-        };
+        let EPair(mem, addr) = self.index.value(t);
+        let mem = self.mem(mem);
+        let addr = self.int(addr);
+        let id = self.push(format!("load {mem} {addr}"));
         self.v.insert(t.into_egglog(), id);
         id
     }
@@ -310,12 +307,9 @@ impl CollectorInit {
         if !self.visited.insert(pair.into_egglog()) {
             return;
         }
-        match self.inner.index.value(pair) {
-            EPair::Load(mem, addr) => {
-                self.int(addr);
-                self.inner.followed_by.entry(mem).or_default().push(pair);
-            }
-        }
+        let EPair(mem, addr) = self.inner.index.value(pair);
+        self.int(addr);
+        self.inner.followed_by.entry(mem).or_default().push(pair);
     }
     fn int(&mut self, int: TokenOpaque<Int>) {
         if !self.visited.insert(int.into_egglog()) {
@@ -345,14 +339,11 @@ impl Collector {
             }
         }
         for pair in self.followed_by.get(&mem).cloned().into_iter().flatten() {
-            match self.index.value(pair) {
-                EPair::Load(_, addr) => {
-                    let addr = self.int(addr, eg);
-                    let id = self.ir.len();
-                    self.ir.push(Stmt::LD(addr));
-                    self.pair2id.insert(pair, id);
-                }
-            }
+            let EPair(_, addr) = self.index.value(pair);
+            let addr = self.int(addr, eg);
+            let id = self.ir.len();
+            self.ir.push(Stmt::LD(addr));
+            self.pair2id.insert(pair, id);
         }
     }
     fn int(&mut self, int: TokenOpaque<Int>, eg: &EGraph) -> Id {

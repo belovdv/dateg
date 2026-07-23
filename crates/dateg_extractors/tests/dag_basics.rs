@@ -126,10 +126,7 @@ fn dag_basics_vec() {
         let index = Index::extract(&nat, e, expr_v);
         let got = index.expr_to_string(&nat, e);
         for (k, v) in index.expr.iter() {
-            let (name, args) = match v {
-                EExpr::ExprAny(n, a) => (n, a),
-            };
-            eprintln!("{k:?} -> {} {:?}", name.get(&nat), args.get(&nat).0);
+            eprintln!("{k:?} -> {} {:?}", v.0.get(&nat), v.1.get(&nat).0);
         }
         assert!(expected.contains(&got.as_str()), "{expected:#?}    {got}");
     }
@@ -141,24 +138,17 @@ fn dag_basics_vec() {
                 return "???".to_string();
             }
 
-            match &self.expr[&expr] {
-                EExpr::ExprAny(op, args) => {
-                    let mut args: Vec<_> = args
-                        .get(nat)
-                        .0
-                        .iter()
-                        .map(|arg| self.expr_to_string(nat, *arg))
-                        .collect();
-                    args.sort();
-                    let mut r = format!("({}", op.get(nat));
-                    for arg in args {
-                        r.push(' ');
-                        r.push_str(&arg);
-                    }
-                    r.push(')');
-                    r
-                }
+            let EExpr(op, args) = &self.expr[&expr];
+            let ts = |arg: &_| self.expr_to_string(nat, *arg);
+            let mut args: Vec<_> = args.get(nat).0.iter().map(ts).collect();
+            args.sort();
+            let mut r = format!("({}", op.get(nat));
+            for arg in args {
+                r.push(' ');
+                r.push_str(&arg);
             }
+            r.push(')');
+            r
         }
     }
 }

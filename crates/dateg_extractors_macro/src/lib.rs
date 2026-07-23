@@ -130,6 +130,7 @@ impl Input {
                 let field = &e.field;
                 let ty = &e.ty;
                 let constructors = &e.constructors;
+                let single_constructor = constructors.len() == 1;
                 let token = gen_token(&e.egraph_value);
                 let map = e.map_ty(cfg);
                 let per_constructor = constructors
@@ -152,6 +153,10 @@ impl Input {
                                 ) -> impl IntoIterator<Item = dateg::Value> { #body }
                             });
                         }
+                        let into_variant = match single_constructor {
+                            true => quote! { #ty(#(#args_),*) },
+                            false => quote! { #ty::#constructor(#(#args_),*) },
+                        };
                         Ok(quote! {
                             pub struct #constructor;
                             impl dateg_extractors::#module::Constructor for #constructor {
@@ -160,7 +165,7 @@ impl Input {
                                 type Enum = #ty;
                                 fn into_variant(inputs: Self::Inputs) -> Self::Enum {
                                     let (#(#args_,)*) = inputs;
-                                    #ty::#constructor(#(#args_),*)
+                                    #into_variant
                                 }
                                 type Index = #index;
                                 #fn_cost
@@ -169,11 +174,20 @@ impl Input {
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
-                let constructors = constructors.iter().map(|cs| {
-                    let constructor = &cs.constructor;
-                    let args = cs.args.iter().map(gen_token);
-                    quote! { #constructor(#(#args),*) }
-                });
+                let ty_def = match single_constructor {
+                    true => {
+                        let args: Vec<_> = constructors[0].args.iter().map(gen_token).collect();
+                        quote! { pub struct #ty(#(pub #args),*); }
+                    }
+                    false => {
+                        let constructors = constructors.iter().map(|cs| {
+                            let constructor = &cs.constructor;
+                            let args = cs.args.iter().map(gen_token);
+                            quote! { #constructor(#(#args),*) }
+                        });
+                        quote! { pub enum #ty { #(#constructors,)* } }
+                    }
+                };
                 Ok(quote! {
                     impl dateg_extractors::#module::IndexFor<#token> for #index {
                         type Enum = #ty;
@@ -181,7 +195,7 @@ impl Input {
                         fn get_map_mut(&mut self) -> &mut #map  { &mut self.#field }
                     }
                     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-                    pub enum #ty { #(#constructors,)* }
+                    #ty_def
                     #(#per_constructor)*
                 })
             })
