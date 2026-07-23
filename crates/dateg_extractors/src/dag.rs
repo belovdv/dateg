@@ -16,8 +16,8 @@ pub trait Constructor: 'static {
     fn into_variant(_: Self::Inputs) -> Self::Enum;
     type Index;
     fn cost(_: Self::Inputs, _: &dateg::EGraph) -> Option<usize>;
-    fn consumes(_: Self::Inputs) -> impl IntoIterator<Item = Value> {
-        [].into_iter()
+    fn consumes(_: Self::Inputs) -> impl TokenTuple {
+        ()
     }
 }
 
@@ -81,7 +81,7 @@ impl<Index: Default> Extractor<Index> {
         S: Schema<Inputs = C::Inputs, Output = C::Output, AllowAdd = True>,
     {
         self.set_constructor_ext::<C, S>(table, C::cost, |is| {
-            C::consumes(is).into_iter().collect()
+            C::consumes(is).into_egglog_vec()
         });
     }
 

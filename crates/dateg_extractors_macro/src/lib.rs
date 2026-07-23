@@ -147,11 +147,9 @@ impl Input {
                             ensure!(closure.inputs.len() == 1, closure.span());
                             let inputs = closure.inputs.get(0).unwrap();
                             let body = &closure.body;
-                            consumes = Some(quote! {
-                                fn consumes(
-                                    #inputs: Self::Inputs
-                                ) -> impl IntoIterator<Item = dateg::Value> { #body }
-                            });
+                            consumes = Some(quote! { fn consumes(
+                                #inputs: Self::Inputs
+                            ) -> impl dateg::TokenTuple { #body } });
                         }
                         let into_variant = match single_constructor {
                             true => quote! { #ty(#(#args_),*) },
