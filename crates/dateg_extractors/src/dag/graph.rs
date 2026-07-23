@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use petgraph::{
     algo::{is_cyclic_directed, tarjan_scc},
     graph::{DiGraph, NodeIndex},
@@ -21,11 +23,24 @@ pub type VertexId = usize;
 struct Vertex {
     is_all: bool,
     cost: usize,
+    label: Option<String>,
 }
 
 impl Graph {
-    pub fn add_vertex(&mut self, is_all: bool, cost: usize) -> VertexId {
-        let v = Vertex { is_all, cost };
+    pub fn add_vertex(
+        &mut self,
+        is_all: bool,
+        cost: usize,
+        label: impl FnOnce() -> Option<String>,
+    ) -> VertexId {
+        static KEEP_LABEL: LazyLock<bool> = LazyLock::new(|| std::env::var("SMT_DEBUG").is_ok());
+        let label = KEEP_LABEL.then(label).flatten();
+
+        let v = Vertex {
+            is_all,
+            cost,
+            label,
+        };
         self.graph.add_node(v).index()
     }
     pub fn add_edges(&mut self, from: VertexId, to: impl IntoIterator<Item = VertexId>) {

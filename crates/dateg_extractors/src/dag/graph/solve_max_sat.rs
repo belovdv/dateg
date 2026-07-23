@@ -37,8 +37,11 @@ impl<'a> DagExtractor<'a> {
             counter: 0,
         };
         timed_print("DagExtractor::init", 100, || {
-            let n = g.graph.node_count();
-            r.vars = (0..n).map(|_| r.new_var()).collect();
+            r.vars = g
+                .graph
+                .node_weights()
+                .map(|n| r.new_var(&n.label))
+                .collect();
 
             assert!(!g.roots.is_empty());
             for root in g.roots.iter().copied() {
@@ -78,13 +81,14 @@ impl<'a> DagExtractor<'a> {
                     .unwrap();
             }
 
+            let s_cg = Some("cg".to_string());
             for group in r.g.conflict_groups.iter() {
                 let mut prefix_any = r.vars[group[0]];
                 for var in group.iter().skip(1).copied().filter(|&var| r.g.used[var]) {
                     r.ctx
                         .assert(r.ctx.not(r.ctx.and(r.vars[var], prefix_any)))
                         .unwrap();
-                    let next = r.new_var();
+                    let next = r.new_var(&s_cg);
                     r.ctx
                         .assert(r.ctx.eq(next, r.ctx.or(prefix_any, r.vars[var])))
                         .unwrap();
@@ -95,9 +99,13 @@ impl<'a> DagExtractor<'a> {
         r
     }
 
-    fn new_var(&mut self) -> SExpr {
+    fn new_var(&mut self, label: &Option<String>) -> SExpr {
         self.counter += 1;
-        let name = format!("v{}", self.counter);
+        let hint = match label {
+            Some(s) => format!("_{}", s.replace("(", "_").replace(")", "_")),
+            None => "".to_string(),
+        };
+        let name = format!("v{}{hint}", self.counter);
         self.ctx.declare_const(name, self.ctx.atoms().bool).unwrap()
     }
 

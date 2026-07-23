@@ -12,11 +12,11 @@ use super::*;
 #[test]
 fn acyclic_subgraph_extraction() {
     let mut g = Graph::default();
-    let root = g.add_vertex(true, 1);
-    let a = g.add_vertex(true, 1);
-    let b = g.add_vertex(false, 1);
-    let c = g.add_vertex(true, 1);
-    let d = g.add_vertex(true, 1);
+    let root = g.add_vertex(true, 1, || None);
+    let a = g.add_vertex(true, 1, || None);
+    let b = g.add_vertex(false, 1, || None);
+    let c = g.add_vertex(true, 1, || None);
+    let d = g.add_vertex(true, 1, || None);
     g.set_roots([root]);
     g.add_edges(root, [a, b]);
     g.add_edges(b, [c, d]);
@@ -27,12 +27,12 @@ fn acyclic_subgraph_extraction() {
     );
 
     let mut g = Graph::default();
-    let root = g.add_vertex(true, 0);
-    let a = g.add_vertex(false, 1);
-    let b = g.add_vertex(false, 1);
-    let c = g.add_vertex(false, 1);
-    let d = g.add_vertex(true, 1);
-    let e = g.add_vertex(true, 1);
+    let root = g.add_vertex(true, 0, || None);
+    let a = g.add_vertex(false, 1, || None);
+    let b = g.add_vertex(false, 1, || None);
+    let c = g.add_vertex(false, 1, || None);
+    let d = g.add_vertex(true, 1, || None);
+    let e = g.add_vertex(true, 1, || None);
     g.set_roots([root]);
     g.add_edges(root, [a, c]);
     g.add_edges(a, [b, d]);
@@ -42,19 +42,19 @@ fn acyclic_subgraph_extraction() {
     assert_eq!(assignment, vec![true, true, false, true, true, true]);
 
     let mut g = Graph::default();
-    let root = g.add_vertex(true, 0);
-    let x = g.add_vertex(false, 100);
-    let y = g.add_vertex(true, 0);
+    let root = g.add_vertex(true, 0, || None);
+    let x = g.add_vertex(false, 100, || None);
+    let y = g.add_vertex(true, 0, || None);
     g.set_roots([root]);
     g.add_edges(x, [y]);
     let assignment = g.solve(SolverConfig::MaxSat {});
     assert_eq!(assignment, vec![true, false, false]);
 
     let mut g = Graph::default();
-    let root = g.add_vertex(false, 0);
-    let a = g.add_vertex(true, 1);
-    let b = g.add_vertex(true, 0);
-    let c = g.add_vertex(true, 0);
+    let root = g.add_vertex(false, 0, || None);
+    let a = g.add_vertex(true, 1, || None);
+    let b = g.add_vertex(true, 0, || None);
+    let c = g.add_vertex(true, 0, || None);
     g.set_roots([root]);
     g.add_edges(root, [a, b, c]);
     g.add_conflicting_group([a, b, c]);
@@ -96,7 +96,7 @@ fn acyclic_subgraph_extraction() {
         for _ in 0..n {
             let is_all = rng.random_bool(0.5);
             let cost = rng.random_range(0..=5usize);
-            let id = g.add_vertex(is_all, cost);
+            let id = g.add_vertex(is_all, cost, || None);
             vertices.push(id);
         }
 

@@ -80,9 +80,7 @@ impl<Index: Default> Extractor<Index> {
         Index: IndexFor<C::Output, Enum = C::Enum>,
         S: Schema<Inputs = C::Inputs, Output = C::Output, AllowAdd = True>,
     {
-        self.set_constructor_ext::<C, S>(table, C::cost, |is| {
-            C::consumes(is).into_egglog_vec()
-        });
+        self.set_constructor_ext::<C, S>(table, C::cost, |is| C::consumes(is).into_egglog_vec());
     }
 
     pub fn set_constructor_ext<C: Constructor, S>(
@@ -99,7 +97,10 @@ impl<Index: Default> Extractor<Index> {
 
         let init_v = move |ext: &mut Self, eg: &EGraph| {
             eg.for_each_row(table, |_, output| {
-                let add_v = || ext.dag.add_vertex(false, 0);
+                let add_v = || {
+                    ext.dag
+                        .add_vertex(false, 0, || Some(format!("v{output:?}")))
+                };
                 ext.values.entry(output.into_egglog()).or_insert_with(add_v);
             });
         };
@@ -107,8 +108,8 @@ impl<Index: Default> Extractor<Index> {
 
         let init_c = move |ext: &mut Self, eg: &EGraph| {
             let mut options: AHashMap<VertexId, Vec<VertexId>> = Default::default();
-            eg.for_each_row(table, |inputs, output| {
-                let output = output.into_egglog();
+            eg.for_each_row(table, |inputs, output_| {
+                let output = output_.into_egglog();
                 if inputs
                     .into_non_primitive()
                     .any(|val| val == output || !ext.values.contains_key(&val))
@@ -118,7 +119,9 @@ impl<Index: Default> Extractor<Index> {
                 let Some(cost) = custom_cost(inputs, eg) else {
                     return;
                 };
-                let cstr = ext.dag.add_vertex(true, cost);
+                let cstr = ext
+                    .dag
+                    .add_vertex(true, cost, || Some(format!("c{output_:?}")));
                 let was = ext
                     .constructors
                     .insert((fid, inputs.into_egglog_vec()), cstr);
@@ -157,7 +160,7 @@ impl<Index: Default> Extractor<Index> {
 
         let init_v = move |ext: &mut Self, eg: &EGraph| {
             eg._inner().container_values().for_each::<C>(|_, v| {
-                let add_v = || ext.dag.add_vertex(false, 0);
+                let add_v = || ext.dag.add_vertex(false, 0, || Some(format!("vContainer")));
                 ext.values.entry(v).or_insert_with(add_v);
             });
         };
@@ -171,7 +174,7 @@ impl<Index: Default> Extractor<Index> {
                     if ContainerValue::iter(inputs).any(|input| input == output) {
                         return;
                     }
-                    let cont = ext.dag.add_vertex(true, 0);
+                    let cont = ext.dag.add_vertex(true, 0, || Some(format!("cContainer")));
                     ext.dag
                         .add_edges(cont, ContainerValue::iter(inputs).map(|v| ext.values[&v]));
                     options.entry(ext.values[&output]).or_default().push(cont);

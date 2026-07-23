@@ -8,7 +8,7 @@ pub trait EGraphValue: 'static {
     type Token: Token<Value = Self>;
 }
 
-pub trait Token: Copy + Eq + Hash + Send + Sync + 'static {
+pub trait Token: std::fmt::Debug + Copy + Eq + Hash + Send + Sync + 'static {
     type Value: Send + Sync + 'static;
     fn from_egglog(egglog: Value) -> Self;
     fn into_egglog(self) -> Value;
