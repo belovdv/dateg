@@ -18,12 +18,18 @@ impl<S: Schema> Table<S> {
 }
 
 impl EGraph {
-    fn new_table<S: Schema>(
+    fn add_table<S: Schema>(
         &mut self,
         name: impl ToString,
         default: DefaultVal,
         merge: MergeFn,
     ) -> Table<S> {
+        let name = name.to_string();
+        let tid = TypeId::of::<S>();
+        if let Some((tid_, id)) = self.tables.get(&name).copied() {
+            assert_eq!(tid_, tid);
+            return Table::from_egglog(id);
+        }
         let id = self.inner.add_table(FunctionConfig {
             schema: S::egglog(&self.inner),
             default,
@@ -31,9 +37,7 @@ impl EGraph {
             name: name.to_string(),
             can_subsume: false,
         });
-        let tid = TypeId::of::<S>();
-        let was = self.tables.insert(name.to_string(), (tid, id));
-        assert!(was.is_none());
+        self.tables.insert(name.to_string(), (tid, id));
         Table::from_egglog(id)
     }
     pub fn get_table<S: Schema>(&self, name: &str) -> Table<S> {
@@ -42,32 +46,32 @@ impl EGraph {
         Table::from_egglog(id)
     }
 
-    pub fn new_table_constructor<Inputs: TokenTuple, Output: TokenOpaqueMarker>(
+    pub fn add_table_constructor<Inputs: TokenTuple, Output: TokenOpaqueMarker>(
         &mut self,
         name: impl ToString,
     ) -> Table<(Inputs, Output, True)> {
-        self.new_table(name, DefaultVal::FreshId, MergeFn::UnionId)
+        self.add_table(name, DefaultVal::FreshId, MergeFn::UnionId)
     }
-    pub fn new_table_function<Inputs: TokenTuple, Output: Token>(
+    pub fn add_table_function<Inputs: TokenTuple, Output: Token>(
         &mut self,
         name: impl ToString,
     ) -> Table<(Inputs, Output, False)> {
-        self.new_table(name, DefaultVal::Fail, MergeFn::AssertEq)
+        self.add_table(name, DefaultVal::Fail, MergeFn::AssertEq)
     }
-    pub fn new_table_relation<Inputs: TokenTuple>(
+    pub fn add_table_relation<Inputs: TokenTuple>(
         &mut self,
         name: impl ToString,
     ) -> Table<(Inputs, TokenPrimitive<()>, False)> {
         let v0 = DefaultVal::Const(Value::new_const(0));
-        self.new_table(name, v0, MergeFn::AssertEq)
+        self.add_table(name, v0, MergeFn::AssertEq)
     }
     /// Merge: old, new -> merged
-    pub fn new_table_function_with_merge<Inputs: TokenTuple, Output: Token>(
+    pub fn add_table_function_with_merge<Inputs: TokenTuple, Output: Token>(
         &mut self,
         name: impl ToString,
         merge: Function<((Output, Output), Output, True)>,
     ) -> Table<(Inputs, Output, False)> {
-        self.new_table(
+        self.add_table(
             name,
             DefaultVal::Fail,
             MergeFn::Primitive(merge.into_egglog(), vec![MergeFn::Old, MergeFn::New]),

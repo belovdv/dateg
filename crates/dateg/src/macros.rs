@@ -15,16 +15,16 @@ macro_rules! execute {
 
     // Table
     (@$eg:expr; constructor $table:ident ($($Args:ident)*) $Ret:ident) => {
-        $crate::execute!(@@$eg; table new_table_constructor; $table ($($Args)*) $Ret);
+        $crate::execute!(@@$eg; table add_table_constructor; $table ($($Args)*) $Ret);
     };
     (@$eg:expr; function $table:ident ($($Args:ident)*) $Ret:ident) => {
-        $crate::execute!(@@$eg; table new_table_function; $table ($($Args)*) $Ret);
+        $crate::execute!(@@$eg; table add_table_function; $table ($($Args)*) $Ret);
     };
     (@$eg:expr; relation $table:ident ($($Args:ident)*)) => {
-        $crate::execute!(@@$eg; table new_table_relation; $table ($($Args)*));
+        $crate::execute!(@@$eg; table add_table_relation; $table ($($Args)*));
     };
     (@$eg:expr; function $table:ident ($($Args:ident)*) $Ret:ident :merge $m:ident) => {
-        $crate::execute!(@@$eg; table new_table_function_with_merge; $table ($($Args)*) $Ret ($m));
+        $crate::execute!(@@$eg; table add_table_function_with_merge; $table ($($Args)*) $Ret ($m));
     };
     (@@$eg:expr; table $m:ident; $table:ident ($($Args:ident)*) $($Ret:ident)? $(($arg:tt))?) => {
         #[cfg(false)] fn $table() {};
