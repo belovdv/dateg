@@ -26,20 +26,17 @@ theory!(Nat(
 
     (relation is_comas (String))
 
-    (val s_one (String) {"one".into()})
-    (val s_inc (String) {"inc".into()})
     (val s_mul (String) {"mul".into()})
     (val s_add (String) {"add".into()})
-    (val s_square (String) {"square".into()})
 )(
     (insert (is_comas s_mul))
     (insert (is_comas s_add))
 
-    (birewrite (one)        (expr {s_one} (expr0)))
-    (birewrite (inc x)      (expr {s_inc} (expr1 x)))
-    (birewrite (square x)   (expr {s_square} (expr1 x)))
-    (birewrite (mul x y)    (expr {s_mul} (expr2 x y)))
-    (birewrite (add x y)    (expr {s_add} (expr2 x y)))
+    (birewrite (one)        (expr "one" (expr0)))
+    (birewrite (inc x)      (expr "inc" (expr1 x)))
+    (birewrite (square x)   (expr "square" (expr1 x)))
+    (birewrite (mul x y)    (expr "mul" (expr2 x y)))
+    (birewrite (add x y)    (expr "add" (expr2 x y)))
     (rewrite (expr s (expr0)) (expr_v s (expr0_v)))
     (rewrite (expr s (expr1 a)) (expr_v s (expr1_v a)))
     (rewrite (expr s (expr2 a b)) (expr_v s (expr2_v a b)))

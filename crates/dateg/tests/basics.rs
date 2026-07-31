@@ -147,7 +147,7 @@ fn rule_builder_external_value() {
         // x - x -> 0
         (rule
             (query r (table_sub x x))
-            (uni r {c0})
+            (uni r (table_const 0))
         )
 
         (run_ruleset_active)
@@ -164,19 +164,17 @@ fn rewrite_helpers() {
         table_add,
         table_var,
         table_const,
-        v0,
         sa,
         sb,
         ..
     } = Arithmetic::default();
 
     execute! {eg;
-        (add c0 (table_const v0))
         (add a (table_var sa))
         (add b (table_var sb))
 
         // ruleset by default: ""
-        (rewrite (table_sub x x) {c0})
+        (rewrite (table_sub x x) (table_const 0))
 
         (set_ruleset_active "arithmetic")
         (rewrite (table_add x y) (table_add y x))
@@ -243,7 +241,7 @@ fn evaluation() {
         (query _ (table_const ab))
 
         // Function result can be unbound
-        (query aa (eval_add a {v0}))
+        (query aa (eval_add a 0))
 
         // The main part of query lhs: `\exists a,b,ab \in universe: ab = a * b`
         (query ab (eval_mul a b))
@@ -315,7 +313,7 @@ fn merge() {
         (call (log_path_concat a b c len))
     );
     rule!(ps;
-        (query {c0} (path a b))
+        (query 0 (path a b))
         (uni a b)
     );
 
@@ -361,15 +359,12 @@ fn container() {
         (evaluation push (CU Int) CU { |(mut c, v)| { c.0.push(v); c } })
     }
 
-    let c0 = tc.add_primitive_value::<usize>(0);
-    let c2 = tc.add_primitive_value::<usize>(2);
-
     execute! {tc;
         (rule
             (query val (v vec))
-            (query _ (ensure_len_leq vec {c2}))
+            (query _ (ensure_len_leq vec 2))
             (query _ (ensure_non_empty vec))
-            (query first (get vec {c0}))
+            (query first (get vec 0))
             (uni val (v (push vec first)))
         )
     }

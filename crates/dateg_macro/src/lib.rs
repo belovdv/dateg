@@ -50,10 +50,12 @@ pub fn rule(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let eg = &input.eg;
     let rb = Ident::new("rb", eg.span());
     let mut emitter = Emitter {
+        eg,
         rb: rb.clone(),
         action_span: rb.span(),
         counter: 0,
         variables: Default::default(),
+        output_pre: quote! {},
         output: quote! {},
     };
     let actions = input.actions.iter();
@@ -61,8 +63,10 @@ pub fn rule(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         Ok(()) => emitter.output,
         Err(err) => return err.into(),
     };
+    let output_pre = emitter.output_pre;
 
     quote! {{
+        #output_pre
         let mut #rb = #eg.rule_builder(None);
         #actions
         let id = #rb.build();
@@ -100,7 +104,11 @@ struct Action {
 enum SExpr {
     Implicit(Span),
     Leaf(Ident),
-    Custom(Expr),
+    Value {
+        val: Expr,
+        primitive: bool,
+        add_into: bool,
+    },
     Nested(Ident, Vec<Self>),
 }
 
@@ -129,10 +137,36 @@ impl Parse for Action {
 }
 impl Parse for SExpr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(if input.peek(syn::token::Brace) {
+        Ok(if input.peek(syn::LitStr) {
+            SExpr::Value {
+                val: Expr::Lit(syn::ExprLit {
+                    attrs: vec![],
+                    lit: input.parse()?,
+                }),
+                primitive: true,
+                add_into: true,
+            }
+        } else if input.peek(syn::Lit) {
+            SExpr::Value {
+                val: Expr::Lit(syn::ExprLit {
+                    attrs: vec![],
+                    lit: input.parse()?,
+                }),
+                primitive: true,
+                add_into: false,
+            }
+        } else if input.peek(syn::token::Brace) {
             let content;
             syn::braced!(content in input);
-            SExpr::Custom(content.parse()?)
+            let mut primitive = false;
+            if content.parse::<syn::Token![#]>().is_ok() {
+                primitive = true;
+            }
+            SExpr::Value {
+                val: content.parse()?,
+                primitive,
+                add_into: false,
+            }
         } else if input.peek(syn::token::Paren) {
             let content;
             syn::parenthesized!(content in input);
@@ -153,19 +187,25 @@ impl Parse for SExpr {
 
 // Output
 
-struct Emitter {
+struct Emitter<'a> {
+    eg: &'a Expr,
     rb: Ident,
     action_span: Span,
     counter: usize,
     variables: HashSet<Ident>,
+    output_pre: TokenStream,
     output: TokenStream,
 }
 
 type Result<T> = std::result::Result<T, TokenStream>;
-impl Emitter {
+impl Emitter<'_> {
     fn emit(&mut self, code: TokenStream) {
         let output = std::mem::take(&mut self.output);
         self.output = quote! { #output #code };
+    }
+    fn emit_pre(&mut self, code: TokenStream) {
+        let output_pre = std::mem::take(&mut self.output_pre);
+        self.output_pre = quote! { #output_pre #code };
     }
 
     fn emit_action(&mut self, action: &Action) -> Result<()> {
@@ -179,7 +219,21 @@ impl Emitter {
                 let bind = match &args[0] {
                     SExpr::Implicit(span) => self.new_ident(*span),
                     SExpr::Leaf(ident) => ident.clone(),
-                    SExpr::Custom(expr) => {
+                    SExpr::Value {
+                        val,
+                        primitive,
+                        add_into,
+                    } => {
+                        let mut expr = quote! { #val };
+                        if *primitive {
+                            let eg = self.eg;
+                            let pre = self.new_ident(expr.span());
+                            let into = add_into.then(|| quote! { .into() });
+                            self.emit_pre(
+                                quote! { let #pre = #eg.add_primitive_value(#expr #into); },
+                            );
+                            expr = quote! { #pre };
+                        }
                         let val = self.new_ident(expr.span());
                         self.emit(quote! { let #val = dateg::Entry::Const(#expr); });
                         self.variables.insert(val.clone());
@@ -260,7 +314,21 @@ impl Emitter {
                 self.maybe_init_var(ident, kind)?;
                 quote! { #ident }
             }
-            SExpr::Custom(expr) => quote! { dateg::Entry::Const(#expr) },
+            SExpr::Value {
+                val,
+                primitive,
+                add_into,
+            } => {
+                let mut expr = quote! { #val };
+                if *primitive {
+                    let eg = self.eg;
+                    let pre = self.new_ident(expr.span());
+                    let into = add_into.then(|| quote! { .into() });
+                    self.emit_pre(quote! { let #pre = #eg.add_primitive_value(#expr #into); });
+                    expr = quote! { #pre };
+                }
+                quote! { dateg::Entry::Const(#expr) }
+            }
             SExpr::Nested(f, args) => {
                 let tmp = self.new_ident(f.span());
                 self.emit_atom(kind, &tmp, f, args)?;
@@ -343,7 +411,7 @@ impl SExpr {
         let span = match self {
             Self::Implicit(span) => *span,
             Self::Leaf(ident) => ident.span(),
-            Self::Custom(expr) => expr.span(),
+            Self::Value { val, .. } => val.span(),
             Self::Nested(f, args) => return Ok((f, args)),
         };
         err!(span, "expected app")
