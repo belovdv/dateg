@@ -157,6 +157,8 @@ macro_rules! theory {
         }
 
         $( $crate::theory!(@sort_define $sort_kind $Sort); )*
+
+        #[derive(Clone)]
         pub struct $Theory {
             pub eg: $crate::EGraph,
             $( pub $name: $crate::theory!(@field_ty $action $($prog)*), )*

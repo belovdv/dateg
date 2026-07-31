@@ -24,7 +24,7 @@ pub use egglog_core_relations::{BaseValue, ContainerValue, Value, ValueRebuilder
 
 pub use dateg_macro::rule;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct EGraph {
     inner: egglog_bridge::EGraph,
     tables: AHashMap<String, (TypeId, egglog_bridge::FunctionId)>,
