@@ -54,7 +54,7 @@ pub fn rule(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         rb: rb.clone(),
         action_span: rb.span(),
         counter: 0,
-        variables: Default::default(),
+        defined: Default::default(),
         output_pre: quote! {},
         output: quote! {},
     };
@@ -192,7 +192,7 @@ struct Emitter<'a> {
     rb: Ident,
     action_span: Span,
     counter: usize,
-    variables: HashSet<Ident>,
+    defined: HashSet<Ident>,
     output_pre: TokenStream,
     output: TokenStream,
 }
@@ -236,7 +236,7 @@ impl Emitter<'_> {
                         }
                         let val = self.new_ident(expr.span());
                         self.emit(quote! { let #val = dateg::Entry::Const(#expr); });
-                        self.variables.insert(val.clone());
+                        self.defined.insert(val.clone());
                         val
                     }
                     SExpr::Nested(ident, ..) => return err!(ident.span(), "expected leaf"),
@@ -285,10 +285,11 @@ impl Emitter<'_> {
         match kind {
             Kind::Add => {
                 ensure!(
-                    !self.variables.contains(bind),
+                    !self.defined.contains(bind),
                     bind.span(),
                     "this definition will shadow previous mentions, use different name"
                 );
+                self.defined.insert(bind.clone());
                 self.emit(quote! { let #bind = dateg::Entry::Var(#rb.#action(#f, #args)); })
             }
             _ => self.emit(quote! { #rb.#action(#f, #args, #bind); }),
@@ -338,7 +339,7 @@ impl Emitter<'_> {
     }
 
     fn maybe_init_var(&mut self, var: &Ident, kind: Kind) -> Result<()> {
-        if self.variables.insert(var.clone()) {
+        if self.defined.insert(var.clone()) {
             if !matches!(kind, Kind::Query) {
                 return err!(var.span(), "var was not defined");
             }
