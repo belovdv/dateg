@@ -395,3 +395,19 @@ fn container() {
     assert!(v_.canon(&tc) != v_x.canon(&tc));
     assert!(v_x_x_x.canon(&tc) == v_x_y_x.canon(&tc));
 }
+
+#[test]
+fn theory_inheritance() {
+    theory!(Arithmetic2: Arithmetic {table_add};
+        ()
+        (
+            (constructor table_add_v2 (Expr Expr) Expr)
+        )
+        (
+            (rewrite (table_add a b) (table_add_v2 a b))
+        )
+    );
+    let a = Arithmetic2::default();
+    let _ = a.table_add;
+    let _ = a.table_add_v2;
+}

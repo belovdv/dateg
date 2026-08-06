@@ -127,12 +127,26 @@ macro_rules! theory {
         ($(($action_extra:tt $($prog_extra:tt)*))*)
         $({$self_:ident; $($post_init:tt)*})?
     ) => {
+        $crate::theory!($Theory: $crate::EGraph{};
+            ($(($sort_kind $Sort))*)
+            ($(($action $name $($prog)*))*)
+            ($(($action_extra $($prog_extra)*))*)
+            $({$self_; $($post_init)*})?
+        );
+    };
+    ($Theory:ident: $Inherits:ty {$($export:ident)*};
+        ($(($sort_kind:ident $Sort:ident))*)
+        ($(($action:tt $name:tt $($prog:tt)*))*)
+        ($(($action_extra:tt $($prog_extra:tt)*))*)
+        $({$self_:ident; $($post_init:tt)*})?
+    ) => {
         $( $crate::helper!(@highlight_ty $action); )*
         $( $crate::helper!(@highlight_ty $action_extra); )*
 
         impl Default for $Theory {
             fn default() -> Self {
-                let mut eg = $crate::EGraph::default();
+                let mut eg = <$Inherits>::default();
+                $(let $export = eg.$export;)*
                 $crate::theory!(@sort_init ty eg; ());
                 $( $crate::theory!(@sort_init $sort_kind eg; $Sort); )*
                 $( $crate::execute!(@eg; $action $name $($prog)*); )*
@@ -146,8 +160,9 @@ macro_rules! theory {
         }
 
         impl $Theory {
-            pub fn init_egraph(eg: &mut dateg::EGraph) {
+            pub fn init_egraph(eg: &mut $Inherits) {
                 eg.set_ruleset_active("");
+                $(let $export = eg.$export;)*
                 $crate::theory!(@sort_init ty eg; ());
                 $( $crate::theory!(@sort_init $sort_kind eg; $Sort); )*
                 $( $crate::execute!(@eg; $action $name $($prog)*); )*
@@ -160,12 +175,12 @@ macro_rules! theory {
 
         #[derive(Clone)]
         pub struct $Theory {
-            pub eg: $crate::EGraph,
+            pub eg: $Inherits,
             $( pub $name: $crate::theory!(@field_ty $action $($prog)*), )*
         }
 
         impl std::ops::Deref for $Theory {
-            type Target = $crate::EGraph;
+            type Target = $Inherits;
             fn deref(&self) -> &Self::Target {
                 &self.eg
             }
