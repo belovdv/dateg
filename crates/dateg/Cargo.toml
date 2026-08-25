@@ -5,9 +5,9 @@ edition = "2024"
 
 [dependencies]
 dateg_macro.path = "../dateg_macro"
-egglog-bridge = { git = "https://github.com/egraphs-good/egglog.git", rev = "53b9721b9706741edff2b7c1e379fc37137184d9" }
-egglog-core-relations = { git = "https://github.com/egraphs-good/egglog.git", rev = "53b9721b9706741edff2b7c1e379fc37137184d9" }
-egglog-numeric-id = { git = "https://github.com/egraphs-good/egglog.git", rev = "53b9721b9706741edff2b7c1e379fc37137184d9" }
+egglog-bridge = { git = "https://github.com/egraphs-good/egglog.git", rev = "8879605cafad303db25787406163a7e5bc845f5d" }
+egglog-core-relations = { git = "https://github.com/egraphs-good/egglog.git", rev = "8879605cafad303db25787406163a7e5bc845f5d" }
+egglog-numeric-id = { git = "https://github.com/egraphs-good/egglog.git", rev = "8879605cafad303db25787406163a7e5bc845f5d" }
 indexmap.workspace = true
 ahash.workspace = true
 paste.workspace = true

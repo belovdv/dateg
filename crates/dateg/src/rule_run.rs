@@ -2,7 +2,7 @@ use crate::*;
 
 macro_rules! run_rules {
     ($_self:ident, $rules:expr) => {
-        $_self.inner.run_rules($rules).unwrap().changed()
+        $_self.inner.run_rules($rules, None).unwrap().changed()
     };
 }
 
