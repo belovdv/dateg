@@ -31,7 +31,12 @@ pub trait IndexFor<Token: TokenOpaqueMarker> {
     }
     fn insert(&mut self, token: Token, value: Self::Enum) {
         let was = self.get_map_mut().insert(token, value);
-        assert!(was.is_none());
+        // Note: multiple constructors can be picked if cost is 0.
+        // TODO: add mutual exclusion for such constructors.
+        // assert!(was.is_none());
+        if was.is_some() {
+            log::warn!("multiple constructors were picked, one was ignored")
+        }
     }
 }
 
