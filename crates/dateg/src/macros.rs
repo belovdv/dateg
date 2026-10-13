@@ -23,6 +23,9 @@ macro_rules! execute {
     (@$eg:expr; relation $table:ident ($($Args:ident)*)) => {
         $crate::execute!(@@$eg; table add_table_relation; $table ($($Args)*));
     };
+    (@$eg:expr; function $table:ident ($($Args:ident)*) $Ret:ident :merge union) => {
+        $crate::execute!(@@$eg; table add_table_function_with_merge_union; $table ($($Args)*) $Ret);
+    };
     (@$eg:expr; function $table:ident ($($Args:ident)*) $Ret:ident :merge $m:ident) => {
         $crate::execute!(@@$eg; table add_table_function_with_merge; $table ($($Args)*) $Ret ($m));
     };

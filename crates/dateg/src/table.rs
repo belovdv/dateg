@@ -77,6 +77,12 @@ impl EGraph {
             MergeFn::Primitive(merge.into_egglog(), vec![MergeFn::Old, MergeFn::New]),
         )
     }
+    pub fn add_table_function_with_merge_union<Inputs: TokenTuple, Output: Token>(
+        &mut self,
+        name: impl ToString,
+    ) -> Table<(Inputs, Output, False)> {
+        self.add_table(name, DefaultVal::Fail, MergeFn::UnionId)
+    }
 
     pub fn for_each_row<S: Schema>(
         &self,
