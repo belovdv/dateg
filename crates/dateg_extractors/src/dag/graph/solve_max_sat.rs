@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use du_utils_timed::timed_print;
 use easy_smt::{Context, SExpr};
 use petgraph::{
@@ -5,17 +7,30 @@ use petgraph::{
     visit::{IntoNeighbors, IntoNodeIdentifiers, NodeFiltered},
 };
 
-use super::Graph;
+use super::{Graph, MaxSatIncSccBlockingConfig};
+use crate::dag::{ExtractError, StatsSink, check_deadline, remaining};
 
 pub struct DagExtractor<'a> {
     g: &'a Graph,
     ctx: Context,
     vars: Vec<SExpr>,
     counter: usize,
+    deadline: Option<Instant>,
+    preemptive_4cycles: bool,
+}
+
+enum Step {
+    Solved(Vec<bool>),
+    Blocked { cycles: usize },
 }
 
 impl<'a> DagExtractor<'a> {
-    pub fn new(g: &'a Graph) -> Self {
+    pub fn new(
+        g: &'a Graph,
+        config: &MaxSatIncSccBlockingConfig,
+        deadline: Option<Instant>,
+    ) -> Result<Self, ExtractError> {
+        check_deadline(deadline)?;
         let ctx = timed_print("smt::Context::new", 100, || {
             let mut builder = easy_smt::ContextBuilder::new();
             if let Some(z3_path) = std::env::var("Z3_PATH").ok() {
@@ -27,14 +42,27 @@ impl<'a> DagExtractor<'a> {
             if std::env::var("SMT_DEBUG").is_ok() {
                 builder.replay_file(Some(std::io::stderr()));
             }
-            builder.build().unwrap()
-        });
+            builder
+                .build()
+                .map_err(|error| ExtractError::Other(error.into()))
+        })?;
+
+        let mut ctx = ctx;
+        if let Some(timeout) = remaining(deadline)? {
+            let millis = u64::try_from(timeout.as_millis())
+                .unwrap_or(u64::MAX)
+                .max(1);
+            ctx.set_option(":timeout", ctx.numeral(millis))
+                .map_err(|error| ExtractError::Other(error.into()))?;
+        }
 
         let mut r = Self {
             g,
             ctx,
             vars: vec![],
             counter: 0,
+            deadline,
+            preemptive_4cycles: config.preemptive_4cycles,
         };
         timed_print("DagExtractor::init", 100, || {
             r.vars = g
@@ -96,7 +124,7 @@ impl<'a> DagExtractor<'a> {
                 }
             }
         });
-        r
+        Ok(r)
     }
 
     fn new_var(&mut self, label: &Option<String>) -> SExpr {
@@ -109,17 +137,33 @@ impl<'a> DagExtractor<'a> {
         self.ctx.declare_const(name, self.ctx.atoms().bool).unwrap()
     }
 
-    /// Increment for search
+    /// Increment for search.
     ///
-    ///  Expects that solution actually exists
-    fn try_solve(&mut self) -> Option<Vec<bool>> {
-        match self.ctx.check().unwrap() {
+    /// Returns `Blocked` when cycles were blocked and another step is required.
+    fn try_solve(&mut self) -> Result<Step, ExtractError> {
+        check_deadline(self.deadline)?;
+
+        match self
+            .ctx
+            .check()
+            .map_err(|error| ExtractError::Other(error.into()))?
+        {
             easy_smt::Response::Sat => {}
-            easy_smt::Response::Unsat => panic!("unsat"),
-            easy_smt::Response::Unknown => panic!("unknown"),
+            easy_smt::Response::Unsat => return Err(ExtractError::Unsolvable),
+            easy_smt::Response::Unknown if self.deadline.is_some() => {
+                return Err(ExtractError::Timeout);
+            }
+            easy_smt::Response::Unknown => {
+                return Err(ExtractError::Other(anyhow::Error::msg(
+                    "solver returned unknown without a timeout",
+                )));
+            }
         }
 
-        let values = self.ctx.get_value(self.vars.clone()).unwrap();
+        let values = self
+            .ctx
+            .get_value(self.vars.clone())
+            .map_err(|error| ExtractError::Other(error.into()))?;
         let used: Vec<_> = values
             .into_iter()
             .enumerate()
@@ -136,36 +180,52 @@ impl<'a> DagExtractor<'a> {
 
         let cycles = self.g.detect_components(&used);
         if cycles.is_empty() {
-            return Some(used);
+            return Ok(Step::Solved(used));
         }
         log::debug!("cycles.len {}", cycles.len());
 
         // Note: it might be beneficial to only block the shortest cycles.
+        let count = cycles.len();
         for cycle in cycles {
             let cycle = self.ctx.and_many(cycle.iter().map(|&var| self.vars[var]));
             self.ctx.assert(self.ctx.not(cycle)).unwrap();
         }
 
-        None
+        Ok(Step::Blocked { cycles: count })
     }
 
-    pub fn solve(&mut self) -> Vec<bool> {
-        for cycle in self.g.detect_cycles_4() {
-            let cycle = self.ctx.and_many(cycle.iter().map(|&var| self.vars[var]));
-            self.ctx.assert(self.ctx.not(cycle)).unwrap();
-        }
-
-        let bound = match std::env::var("DATEG_GRAPH_SOLVE_BOUND") {
-            Ok(v) => v.parse().unwrap(),
-            Err(_) => usize::MAX,
-        };
-        for i in 0..bound {
-            if let Some(solution) =
-                timed_print(format!("DagExtractor::step {i}"), 100, || self.try_solve())
-            {
-                return solution;
+    pub fn solve(
+        &mut self,
+        deadline: Option<Instant>,
+        stats: &mut StatsSink<'_>,
+    ) -> Result<Vec<bool>, ExtractError> {
+        check_deadline(deadline)?;
+        let preemptive_started = Instant::now();
+        if self.preemptive_4cycles {
+            let cycles = self.g.detect_cycles_4();
+            stats.count("maxsat.inc_scc.preemptive_4cycles", cycles.len() as u64);
+            for cycle in cycles {
+                let cycle = self.ctx.and_many(cycle.iter().map(|&var| self.vars[var]));
+                self.ctx.assert(self.ctx.not(cycle)).unwrap();
             }
         }
-        panic!("out of bound on iterations ({bound})")
+        stats.duration("maxsat.inc_scc.preemptive", preemptive_started.elapsed());
+
+        let mut steps = 0u64;
+        let mut blocked_sccs = 0u64;
+        loop {
+            check_deadline(deadline)?;
+            steps += 1;
+            let step = self.try_solve();
+            if let Ok(Step::Blocked { cycles }) = &step {
+                blocked_sccs += *cycles as u64;
+            }
+            stats.count("maxsat.inc_scc.steps", steps);
+            stats.count("maxsat.inc_scc.blocked_sccs", blocked_sccs);
+            match step? {
+                Step::Solved(solution) => return Ok(solution),
+                Step::Blocked { .. } => {}
+            }
+        }
     }
 }

@@ -1,6 +1,6 @@
 use ahash::{AHashMap, AHashSet};
 use dateg::*;
-use dateg_extractors::dag::{IndexFor, index_dag};
+use dateg_extractors::dag::{ExtractOptions, IndexFor, SolverConfig, index_dag};
 
 theory!(Memory(
     (sort Mem)
@@ -373,13 +373,19 @@ impl Collector {
 
 impl Memory {
     fn extract(&self, root: impl TokenOpaqueMarker) -> Index {
+        let options =
+            ExtractOptions::builder(SolverConfig::MaxSatIncSccBlocking(Default::default())).build();
         Index::extract(
             &self,
             root,
             (self.init, self.store),
             self.load,
             (self.cst, self.var, self.load_val, self.add, self.sub),
+            &options,
+            None,
         )
+        .unwrap()
+        .index
     }
 }
 

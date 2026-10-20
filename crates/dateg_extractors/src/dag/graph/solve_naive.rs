@@ -1,13 +1,21 @@
-use super::*;
+use std::time::Instant;
 
-pub fn solve(g: &Graph) -> (usize, Vec<bool>) {
+use super::*;
+use crate::dag::{ExtractError, check_deadline};
+
+pub fn solve(g: &Graph, deadline: Option<Instant>) -> Result<(usize, Vec<bool>), ExtractError> {
     let n = g.graph.node_count();
+    assert!(n < 64, "naive solver supports at most 63 nodes, got {n}");
+
     let mut best_cost = usize::MAX;
     let mut best_assignment = vec![false; n];
-    assert!(n < 64);
     let max_mask = 1u64 << n;
 
     for mask in 0..max_mask {
+        if mask % 1024 == 0 {
+            check_deadline(deadline)?;
+        }
+
         let assignment: Vec<bool> = (0..n).map(|i| (mask >> i) & 1 != 0).collect();
         if !g.check_constraints(&assignment) {
             continue;
@@ -24,5 +32,9 @@ pub fn solve(g: &Graph) -> (usize, Vec<bool>) {
         }
     }
 
-    (best_cost, best_assignment)
+    if best_cost == usize::MAX {
+        Err(ExtractError::Unsolvable)
+    } else {
+        Ok((best_cost, best_assignment))
+    }
 }

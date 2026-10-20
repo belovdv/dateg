@@ -1,10 +1,12 @@
-use std::sync::LazyLock;
+use std::{sync::LazyLock, time::Instant};
 
 use petgraph::{
     algo::{is_cyclic_directed, tarjan_scc},
     graph::{DiGraph, NodeIndex},
     visit::{IntoNodeIdentifiers, NodeFiltered},
 };
+
+use super::{ExtractError, StatsSink};
 
 mod solve_max_sat;
 mod solve_naive;
@@ -24,6 +26,36 @@ struct Vertex {
     is_all: bool,
     cost: usize,
     label: Option<String>,
+}
+
+/// Selects the extraction algorithm.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SolverConfig {
+    /// Exhaustive search. Only suitable for small graphs; intended as a test oracle.
+    Naive,
+    /// Incremental MaxSAT. After each model, block every SCC in the selected
+    /// subgraph and re-solve until the selected subgraph is acyclic.
+    MaxSatIncSccBlocking(MaxSatIncSccBlockingConfig),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaxSatIncSccBlockingConfig {
+    /// Preemptively block all 4-cycles before the first solve.
+    pub preemptive_4cycles: bool,
+}
+
+impl Default for MaxSatIncSccBlockingConfig {
+    fn default() -> Self {
+        Self {
+            preemptive_4cycles: true,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Solution {
+    pub assignment: Vec<bool>,
+    pub cost: usize,
 }
 
 impl Graph {
@@ -63,19 +95,53 @@ impl Graph {
         }
     }
 
-    pub fn solve(&mut self, solver: SolverConfig) -> Vec<bool> {
+    /// Solve the graph.
+    ///
+    /// `stats` is an optional out-param: when present, common graph metrics and
+    /// solver-specific counters/timings are recorded.
+    pub fn solve_with(
+        &mut self,
+        config: &SolverConfig,
+        deadline: Option<Instant>,
+        stats: &mut StatsSink<'_>,
+    ) -> Result<Solution, ExtractError> {
         self.collect_usage();
-        let r = match solver {
-            SolverConfig::MaxSat {} => solve_max_sat::DagExtractor::new(self).solve(),
+        stats.count("graph.nodes", self.graph.node_count() as u64);
+        stats.count("graph.edges", self.graph.edge_count() as u64);
+        stats.count(
+            "graph.used_nodes",
+            self.used.iter().filter(|&&used| used).count() as u64,
+        );
+        stats.count("graph.conflict_groups", self.conflict_groups.len() as u64);
+        stats.text(
+            "solver.name",
+            match config {
+                SolverConfig::Naive => "naive",
+                SolverConfig::MaxSatIncSccBlocking(_) => "maxsat.inc_scc",
+            },
+        );
+
+        let solve_started = Instant::now();
+        let assignment = match config {
             SolverConfig::Naive => {
-                let (cost, r) = solve_naive::solve(self);
-                assert!(cost != usize::MAX);
-                r
+                solve_naive::solve(self, deadline).map(|(_, assignment)| assignment)
             }
+            SolverConfig::MaxSatIncSccBlocking(config) => (|| {
+                let mut solver = solve_max_sat::DagExtractor::new(self, config, deadline)?;
+                solver.solve(deadline, stats)
+            })(),
         };
-        assert!(self.check_constraints(&r));
-        r
+
+        stats.solver(solve_started.elapsed());
+        let assignment = assignment?;
+        let cost = self.assignment_cost(&assignment);
+        Ok(Solution { assignment, cost })
     }
+
+    pub(super) fn validate(&self, assignment: &[bool]) -> bool {
+        self.check_constraints(assignment)
+    }
+
     fn collect_usage(&mut self) {
         self.used = vec![false; self.graph.node_count()];
         let mut queue = self.roots.clone();
@@ -87,12 +153,6 @@ impl Graph {
             }
         }
     }
-}
-
-pub enum SolverConfig {
-    MaxSat {},
-    #[allow(unused)]
-    Naive,
 }
 
 impl Graph {
@@ -110,11 +170,10 @@ impl Graph {
         !is_cyclic_directed(&filtered)
     }
 
-    #[cfg(test)]
-    fn cost(&self, assignment: &[bool]) -> usize {
+    fn assignment_cost(&self, assignment: &[bool]) -> usize {
         self.graph
             .node_indices()
-            .filter(|&ni| assignment[ni.index()])
+            .filter(|&ni| self.used[ni.index()] && assignment[ni.index()])
             .map(|ni| self.graph[ni].cost)
             .sum()
     }

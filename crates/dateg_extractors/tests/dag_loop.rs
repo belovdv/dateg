@@ -1,7 +1,7 @@
 mod nat;
 
 use dateg::{EGraph, EGraphValue, TokenOpaque, execute};
-use dateg_extractors::dag::index_dag;
+use dateg_extractors::dag::{ExtractOptions, SolverConfig, index_dag};
 
 #[test]
 fn dag_loop() {
@@ -37,7 +37,11 @@ fn dag_loop() {
         )
     );
     let x = x.canon(&eg);
-    let index = Index::extract(&eg, x, (c1, f, g));
+    let options =
+        ExtractOptions::builder(SolverConfig::MaxSatIncSccBlocking(Default::default())).build();
+    let index = Index::extract(&eg, x, (c1, f, g), &options, None)
+        .unwrap()
+        .index;
     impl Index {
         fn expr_to_string(&self, expr: TokenOpaque<Expr>) -> String {
             match self.expr[&expr] {

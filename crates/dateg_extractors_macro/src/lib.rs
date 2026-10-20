@@ -38,12 +38,12 @@ pub fn index_tree(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// Usage (see tests for details):
 /// ```no_run
-/// # macro_rules! index_tree { ($($tt:tt)*) => { () }; };
-/// index_tree!(IndexStructName
+/// # macro_rules! index_dag { ($($tt:tt)*) => { () }; };
+/// index_dag!(IndexStructName
 ///     index_field1: TypeForEnumOfResultsName1 (datatype EGraphValueOpaque1
 ///         Constructor1 (Arg1 Arg2 Arg3)
 ///         Constructor2 ()
-///             { |inputs| cost_expression(using index on opaque inputs) }
+///             { |inputs, eg| cost_expression(using index on opaque inputs) }
 ///             { |inputs| selection of opaque inputs to be considered consumed }
 ///     )
 /// )
@@ -53,7 +53,8 @@ pub fn index_tree(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - `struct Index { index_field: Map<EGraphValueOpaque1, EnumOfConstructors> }`
 /// - `enum EnumOfConstructors { Constructor(Arg, ...), ... } ...`
 /// - trait implementations
-/// - `fn Index::extract(&EGraph, TokenOpaque, table tuples) -> Self`
+/// - `fn Index::extract(&EGraph, TokenOpaque, table tuples, &ExtractOptions,
+///   Option<&mut ExtractStats>) -> Result<Extraction<Self>, ExtractError>`
 #[proc_macro]
 pub fn index_dag(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as Input);
@@ -243,9 +244,25 @@ impl Input {
             Cfg::Tree => quote! { eg },
             Cfg::Dag => quote! { eg, root },
         };
+        let (extract_extra_args, extract_call_extra, extract_return) = match cfg {
+            Cfg::Tree => (quote! {}, quote! {}, quote! { Self }),
+            Cfg::Dag => (
+                quote! {
+                    options: &dateg_extractors::dag::ExtractOptions,
+                    stats: Option<&mut dateg_extractors::dag::ExtractStats>
+                },
+                quote! { , options, stats },
+                quote! {
+                    Result<
+                        dateg_extractors::dag::Extraction<Self>,
+                        dateg_extractors::dag::ExtractError,
+                    >
+                },
+            ),
+        };
 
         Ok(quote! {
-            #[derive(Default)]
+            #[derive(Debug, Default)]
             pub struct #index {
                 #(#fields)*
             }
@@ -256,10 +273,13 @@ impl Input {
                     #(#extract_set1)*
                     r
                 }
-                pub fn extract(#extract_args2) -> Self {
+                pub fn extract(
+                    #extract_args2
+                    #extract_extra_args
+                ) -> #extract_return {
                     let mut r = dateg_extractors::#module::Extractor::<Self>::default();
                     #(#extract_set2)*
-                    r.extract(#extract_args)
+                    r.extract(#extract_args #extract_call_extra)
                 }
             }
         })

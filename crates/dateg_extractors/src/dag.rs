@@ -1,6 +1,12 @@
+mod error;
 mod graph;
+mod stats;
 
-use std::{any::TypeId, marker::PhantomData};
+use std::{
+    any::TypeId,
+    marker::PhantomData,
+    time::{Duration, Instant},
+};
 
 use ahash::{AHashMap, AHashSet};
 use dateg::*;
@@ -8,6 +14,11 @@ use dateg::*;
 use crate::dag::graph::VertexId;
 
 pub use dateg_extractors_macro::index_dag;
+pub use error::ExtractError;
+pub(crate) use error::{check_deadline, remaining};
+pub use graph::{MaxSatIncSccBlockingConfig, SolverConfig};
+pub(crate) use stats::StatsSink;
+pub use stats::{ExtractStats, StatValue};
 
 pub trait Constructor: 'static {
     type Inputs: TokenTuple;
@@ -56,28 +67,139 @@ pub struct Extractor<Index> {
     callbacks_collect: AHashMap<TypeId, Box<dyn Fn(&Self, &EGraph, &mut Index)>>,
 }
 
+pub struct ExtractOptions {
+    solver: SolverConfig,
+    timeout: Option<Duration>,
+    validate: bool,
+}
+
+pub struct ExtractOptionsBuilder {
+    solver: SolverConfig,
+    timeout: Option<Duration>,
+    validate: bool,
+}
+
+impl ExtractOptions {
+    /// Default wall-clock budget. Disable explicitly with `timeout(None)`.
+    pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+    /// Start building options for `solver`.
+    ///
+    /// Defaults: validation enabled, [`Self::DEFAULT_TIMEOUT`].
+    pub fn builder(solver: SolverConfig) -> ExtractOptionsBuilder {
+        ExtractOptionsBuilder {
+            solver,
+            timeout: Some(Self::DEFAULT_TIMEOUT),
+            validate: true,
+        }
+    }
+}
+
+impl ExtractOptionsBuilder {
+    /// Set the wall-clock budget; `None` disables it.
+    pub fn timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Enable or disable validation of the solver assignment.
+    pub fn validate(mut self, validate: bool) -> Self {
+        self.validate = validate;
+        self
+    }
+
+    pub fn build(self) -> ExtractOptions {
+        ExtractOptions {
+            solver: self.solver,
+            timeout: self.timeout,
+            validate: self.validate,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Extraction<Index> {
+    pub index: Index,
+    pub cost: usize,
+}
+
+macro_rules! ensure {
+    ($cond:expr, $err:expr) => {
+        if !$cond {
+            return Err($err);
+        }
+    };
+}
+
 impl<Index: Default> Extractor<Index> {
-    pub fn extract(mut self, eg: &EGraph, root: impl TokenOpaqueMarker) -> Index {
+    pub fn extract(
+        mut self,
+        eg: &EGraph,
+        root: impl TokenOpaqueMarker,
+        options: &ExtractOptions,
+        stats: Option<&mut ExtractStats>,
+    ) -> Result<Extraction<Index>, ExtractError> {
+        let started = Instant::now();
+        let deadline = options.timeout.map(|timeout| started + timeout);
+        let mut stats = StatsSink(stats);
+        if let Some(stats) = stats.0.as_deref_mut() {
+            *stats = ExtractStats::default();
+        }
+
+        let result = self.extract_inner(eg, root, options, deadline, &mut stats);
+        stats.total(started.elapsed());
+        result
+    }
+
+    fn extract_inner(
+        &mut self,
+        eg: &EGraph,
+        root: impl TokenOpaqueMarker,
+        options: &ExtractOptions,
+        deadline: Option<Instant>,
+        stats: &mut StatsSink<'_>,
+    ) -> Result<Extraction<Index>, ExtractError> {
         for init_v in std::mem::take(&mut self.callbacks_init_v).values() {
-            (init_v)(&mut self, eg);
+            (init_v)(self, eg);
         }
         for init_c in std::mem::take(&mut self.callbacks_init_c).values() {
-            (init_c)(&mut self, eg);
+            (init_c)(self, eg);
         }
         for consumed_by in self.consumers.values() {
             self.dag.add_conflicting_group(consumed_by.iter().copied());
         }
-        assert!(
+
+        // TODO: the extractor could canonicalize here, but currently requires
+        // the caller to do it.
+        ensure!(
             root.as_token_opaque().canon(eg) == root.as_token_opaque(),
-            "please canonicalize root token"
+            ExtractError::RootNotCanonical
         );
-        self.dag.set_roots([self.values[&root.into_egglog()]]);
-        self.used = self.dag.solve(graph::SolverConfig::MaxSat {});
+        let root_vertex = *self
+            .values
+            .get(&root.into_egglog())
+            .ok_or(ExtractError::RootMissing)?;
+        self.dag.set_roots([root_vertex]);
+
+        let solution = self.dag.solve_with(&options.solver, deadline, stats)?;
+
+        if options.validate {
+            let t = Instant::now();
+            let valid = self.dag.validate(&solution.assignment);
+            stats.verify(t.elapsed());
+            ensure!(valid, ExtractError::InvalidSolution);
+        }
+        self.used = solution.assignment;
+
         let mut index = Index::default();
         for collect in std::mem::take(&mut self.callbacks_collect).values() {
             (collect)(&self, eg, &mut index);
         }
-        index
+
+        Ok(Extraction {
+            index,
+            cost: solution.cost,
+        })
     }
 
     pub fn set_constructor<C: Constructor, S>(&mut self, table: Table<S>)

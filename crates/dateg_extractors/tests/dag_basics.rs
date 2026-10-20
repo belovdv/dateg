@@ -1,9 +1,15 @@
 mod nat;
 
+use std::time::Duration;
+
 use dateg::{EGraph, TokenOpaque, execute};
 
-use dateg_extractors::dag::index_dag;
+use dateg_extractors::dag::{ExtractError, ExtractOptions, ExtractStats, SolverConfig, index_dag};
 use nat::*;
+
+fn options() -> ExtractOptions {
+    ExtractOptions::builder(SolverConfig::MaxSatIncSccBlocking(Default::default())).build()
+}
 
 #[test]
 fn dag_basics() {
@@ -30,8 +36,8 @@ fn dag_basics() {
 
     let e4 = nat.get_val(4);
     let e13 = nat.get_val(13);
-    for (e, expected) in [
-        (e4, &["(mul (inc (one)) (inc (one)))"][..]),
+    for (e, expected, expected_cost) in [
+        (e4, &["(mul (inc (one)) (inc (one)))"][..], 3),
         (
             e13,
             &[
@@ -41,17 +47,33 @@ fn dag_basics() {
                 // +1(* 3 *22)
                 "(inc (mul (inc (inc (one))) (mul (inc (one)) (inc (one)))))",
             ],
+            6,
         ),
         (
             e16,
             &["(mul (mul (inc (one)) (inc (one))) (mul (inc (one)) (inc (one))))"],
+            4,
         ),
     ] {
-        let index = Index::extract(&nat, e, (one, inc, mul));
+        let mut stats = ExtractStats::default();
+        let extraction =
+            Index::extract(&nat, e, (one, inc, mul), &options(), Some(&mut stats)).unwrap();
 
-        let got = index.expr_to_string(e);
+        assert!(stats.solver.is_some());
+        assert!(stats.verify.is_some());
+        assert!(stats.total > Duration::ZERO);
+        assert!(stats.custom.contains_key("maxsat.inc_scc.steps"));
+
+        let got = extraction.index.expr_to_string(e);
         assert!(expected.contains(&got.as_str()), "{expected:#?}    {got}");
+        assert_eq!(extraction.cost, expected_cost, "{got}");
     }
+
+    let timeout = ExtractOptions::builder(SolverConfig::MaxSatIncSccBlocking(Default::default()))
+        .timeout(Some(Duration::ZERO))
+        .build();
+    let failure = Index::extract(&nat, e4, (one, inc, mul), &timeout, None).unwrap_err();
+    assert!(matches!(failure, ExtractError::Timeout));
 
     impl Index {
         fn expr_to_string(&self, expr: TokenOpaque<Expr>) -> String {
@@ -123,7 +145,9 @@ fn dag_basics_vec() {
             eprintln!("{output:?} <- {} {:?}", name.get(&nat), args.get(&nat).0);
         });
 
-        let index = Index::extract(&nat, e, expr_v);
+        let index = Index::extract(&nat, e, expr_v, &options(), None)
+            .unwrap()
+            .index;
         let got = index.expr_to_string(&nat, e);
         for (k, v) in index.expr.iter() {
             eprintln!("{k:?} -> {} {:?}", v.0.get(&nat), v.1.get(&nat).0);

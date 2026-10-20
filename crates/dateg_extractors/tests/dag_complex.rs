@@ -5,9 +5,13 @@ use std::collections::BTreeSet;
 use ahash::AHashSet;
 use dateg::{TokenOpaque, execute};
 
-use dateg_extractors::dag::{Extractor, IndexFor, index_dag};
+use dateg_extractors::dag::{ExtractOptions, Extractor, IndexFor, SolverConfig, index_dag};
 use du_utils_timed::timed_print;
 use nat::*;
+
+fn options() -> ExtractOptions {
+    ExtractOptions::builder(SolverConfig::MaxSatIncSccBlocking(Default::default())).build()
+}
 
 #[test]
 fn dag_correctness() {
@@ -48,7 +52,7 @@ fn dag_correctness() {
         extractor.set_constructor::<One, _>(one);
         extractor.set_constructor::<Inc, _>(inc);
         extractor.set_constructor::<Mul, _>(mul);
-        let index = extractor.extract(&nat, e);
+        let index = extractor.extract(&nat, e, &options(), None).unwrap().index;
         assert_eq!(index.eval(e), n);
         assert_eq!(index.collect_cost(e), costs[n]);
     }
@@ -110,7 +114,9 @@ fn dag_many_loops() {
         let cost = costs[n];
         let e = nat.get_val(n);
         let index = timed_print(format!("Index::extract {n}"), 100, || {
-            Index::extract(&nat, e, (one, inc, mul, sub))
+            Index::extract(&nat, e, (one, inc, mul, sub), &options(), None)
+                .unwrap()
+                .index
         });
         assert_eq!(index.eval(e), n);
         assert_eq!(index.collect_cost(e), cost, "{n}");
