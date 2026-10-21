@@ -72,6 +72,35 @@ pub fn extract_expr_with(
     Ok(extraction.cost)
 }
 
+pub fn eval_expr(index: &ExprIndex, token: TokenOpaque<Int>) -> usize {
+    match index.expr.get(&token).expect("validated value") {
+        ExprEnum::EOne() => 1,
+        ExprEnum::EInc(a) => eval_expr(index, *a) + 1,
+        ExprEnum::EMul(a, b) => eval_expr(index, *a) * eval_expr(index, *b),
+    }
+}
+
+pub fn extract_expr_eval(
+    m: &Memory,
+    root: TokenOpaque<Int>,
+    algorithm: &Algorithm,
+) -> Result<(usize, usize), ExtractError> {
+    let extraction =
+        ExprIndex::extract(m, root, (m.one, m.inc, m.mul), &algorithm.options(), None)?;
+    let cost = validate_index(
+        &extraction.index.expr,
+        root,
+        |value| match value {
+            ExprEnum::EOne() => vec![],
+            ExprEnum::EInc(a) => vec![*a],
+            ExprEnum::EMul(a, b) => vec![*a, *b],
+        },
+        |_| 1,
+    );
+    assert_eq!(cost, extraction.cost);
+    Ok((cost, eval_expr(&extraction.index, root)))
+}
+
 pub fn extract_expr_string(
     m: &Memory,
     root: TokenOpaque<Int>,

@@ -1,10 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
-use dateg::TokenOpaque;
+use dateg::{TokenOpaque, execute};
 
 use crate::case::{Case, Complexity, Expected, Purpose, SourceKind, Tier};
-use crate::indexes::expr::extract_expr;
-use crate::memory::{Int, Memory, inc_chain};
+use crate::indexes::expr::{extract_expr, extract_expr_eval};
+use crate::memory::{Int, Memory, inc_chain, saturate};
 
 /// Builds a case from a fixture generator.
 ///
@@ -71,6 +71,60 @@ fn layered(depth: usize, width: usize) -> (Memory, TokenOpaque<Int>, usize, usiz
     (m, root, seen.len(), size)
 }
 
+/// Independent DP oracle for the smallest term count of each value using
+/// `one`, `inc`, and `mul` (same oracle as the removed dag_correctness test).
+fn nat_costs(max_value: usize, max_cost: usize) -> Vec<usize> {
+    let mut costs = vec![usize::MAX; max_value + 1];
+    costs[1] = 1;
+    let mut available: HashSet<BTreeSet<usize>> = [[1].into_iter().collect()].into_iter().collect();
+
+    for len in 2..=max_cost {
+        let mut next = HashSet::new();
+        for available in available {
+            let mut values = HashSet::new();
+            for a in available.iter().copied() {
+                values.insert(a + 1);
+                for b in available.iter().copied() {
+                    values.insert(a * b);
+                }
+            }
+            for value in values {
+                if value <= max_value && !available.contains(&value) {
+                    let mut new = available.clone();
+                    new.insert(value);
+                    next.insert(new);
+                    costs[value] = costs[value].min(len);
+                }
+            }
+        }
+        available = next;
+    }
+    costs
+}
+
+fn nat_case(name: &'static str, tier: Tier, max_value: usize, max_cost: usize) -> Case {
+    let costs = nat_costs(max_value, max_cost);
+    assert!(costs.iter().skip(1).all(|&cost| cost != usize::MAX));
+    Case::new(
+        name,
+        Purpose::Verification,
+        SourceKind::Special,
+        Complexity::new(tier, (max_value + 2).max(20)),
+        Expected::Exact(costs[max_value]),
+        move |algorithm| {
+            let (mut m, _) = inc_chain(max_value);
+            saturate(&mut m, &["tree"]);
+            for value in 1..=max_value {
+                let root = m.get_val(value).canon(&m.eg);
+                let (cost, evaluated) = extract_expr_eval(&m, root, algorithm)?;
+                assert_eq!(cost, costs[value], "value {value}");
+                assert_eq!(evaluated, value, "value {value}");
+            }
+            Ok(costs[max_value])
+        },
+    )
+}
+
 pub fn cases() -> Vec<Case> {
     vec![
         case!("special/chain_6", Fast, {
@@ -107,5 +161,40 @@ pub fn cases() -> Vec<Case> {
         case!("special/layered_6x3", Slow, layered(6, 3)),
         case!("special/layered_8x4", Slow, layered(8, 4)),
         case!("special/layered_12x6", Slow, layered(12, 6)),
+        nat_case("special/nat_range_8", Tier::Slow, 8, 9),
+        nat_case("special/nat_range_15", Tier::Slow, 15, 9),
+        nat_case("special/nat_range_31", Tier::Slow, 31, 12),
+        Case::new(
+            "special/many_roots_loops",
+            Purpose::Verification,
+            SourceKind::Special,
+            Complexity::new(Tier::Slow, 20),
+            Expected::Exact(16),
+            |algorithm| {
+                let mut m = Memory::default();
+                let one = m.add_one();
+                let mut roots = vec![one];
+                let mut last = one;
+                for _ in 1..16 {
+                    last = m.add_inc(last);
+                    roots.push(last);
+                }
+                let loop_root = m.add_inc(last);
+                let e2 = m.add_inc(one);
+                execute! {m;
+                    (rule (uni {loop_root} {e2}))
+                }
+                while m.run_ruleset("") {}
+
+                for (index, root) in roots.iter().enumerate() {
+                    let root = root.canon(&m.eg);
+                    let cost = extract_expr(&m, root, algorithm)?;
+                    assert_eq!(cost, index + 1, "root value {}", index + 1);
+                }
+                let loop_root = loop_root.canon(&m.eg);
+                assert_eq!(extract_expr(&m, loop_root, algorithm)?, 2);
+                Ok(16)
+            },
+        ),
     ]
 }

@@ -81,6 +81,28 @@ pub fn cases() -> Vec<Case> {
             },
         ),
         Case::new(
+            "consumption/store_loaded_value_noop",
+            Purpose::Verification,
+            SourceKind::Consumption,
+            Complexity::new(Tier::Fast, 15),
+            Expected::Unknown,
+            |algorithm| {
+                let mut base = Memory::default();
+                let init = base.add_init();
+                let addr = base.add_cst(1usize);
+                let value = base.add_cst(5usize);
+                let stored = base.add_store(init, addr, value);
+                saturate(&mut base, &["alias"]);
+                let stored = stored.canon(&base.eg);
+                let baseline = extract_mem(&base, stored, algorithm)?;
+
+                let (m, root, _) = store_loaded_value();
+                let noop = extract_mem(&m, root, algorithm)?;
+                assert_eq!(noop, baseline, "store of loaded value must not add cost");
+                Ok(noop)
+            },
+        ),
+        Case::new(
             "consumption/forwarding_expressions",
             Purpose::Verification,
             SourceKind::Consumption,
