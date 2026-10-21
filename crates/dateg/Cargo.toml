@@ -11,3 +11,4 @@ egglog-numeric-id = { git = "https://github.com/egraphs-good/egglog.git", rev = 
 indexmap.workspace = true
 ahash.workspace = true
 paste.workspace = true
+rayon.workspace = true

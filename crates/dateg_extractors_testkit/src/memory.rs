@@ -218,7 +218,11 @@ theory!(Memory(
         (query _ (usize_neq ca cb))
         (insert (neq a b))
     )
-));
+)
+{
+    m;
+    m.set_single_thread();
+});
 
 pub fn inc_chain(n: usize) -> (Memory, TokenOpaque<Int>) {
     let mut m = Memory::default();

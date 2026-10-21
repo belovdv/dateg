@@ -66,7 +66,11 @@ mod nat {
         )
         (birewrite (add (mul x y) y) (mul (inc x) y))
         (birewrite (mul x x) (square x))
-    ));
+    )
+    {
+        nat;
+        nat.set_single_thread();
+    });
 
     impl Nat {
         pub fn get_val(&self, val: usize) -> TokenOpaque<Expr> {

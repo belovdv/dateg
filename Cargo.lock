@@ -237,6 +237,7 @@ dependencies = [
  "egglog-numeric-id",
  "indexmap",
  "paste",
+ "rayon",
 ]
 
 [[package]]

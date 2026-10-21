@@ -8,7 +8,7 @@ mod table;
 mod token;
 mod utils;
 
-use std::any::TypeId;
+use std::{any::TypeId, sync::Arc};
 
 use ahash::AHashMap;
 
@@ -30,6 +30,7 @@ pub struct EGraph {
     tables: AHashMap<String, (TypeId, egglog_bridge::FunctionId)>,
     pub ruleset_active: String,
     pub rulesets: AHashMap<String, Vec<RuleId>>,
+    thread_pool: Option<Arc<rayon::ThreadPool>>,
 }
 
 impl EGraph {
@@ -47,10 +48,44 @@ impl EGraph {
         TokenContainer::from_egglog(self.inner.get_container_value(c))
     }
 
+    /// Run egraph work on the given local pool instead of the global rayon pool.
+    pub fn with_thread_pool(mut self, pool: Arc<rayon::ThreadPool>) -> Self {
+        self.thread_pool = Some(pool);
+        self
+    }
+
+    /// Run egraph work on a new single-thread pool owned by this egraph.
+    pub fn with_single_thread(self) -> Self {
+        self.with_thread_pool(single_thread_pool())
+    }
+
+    /// An egraph that executes rules and rebuilds on its own single-thread pool.
+    pub fn single_thread() -> Self {
+        Self::default().with_single_thread()
+    }
+
+    /// Switch an existing egraph to a new single-thread pool.
+    pub fn set_single_thread(&mut self) {
+        self.thread_pool = Some(single_thread_pool());
+    }
+
+    pub fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
+        self.thread_pool.as_ref()
+    }
+
     pub fn _inner(&self) -> &egglog_bridge::EGraph {
         &self.inner
     }
     pub fn _inner_mut(&mut self) -> &mut egglog_bridge::EGraph {
         &mut self.inner
     }
+}
+
+fn single_thread_pool() -> Arc<rayon::ThreadPool> {
+    Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap(),
+    )
 }
