@@ -18,6 +18,10 @@ pub trait CostFor<T: Token> {
     fn cost(&self, t: T, eg: &EGraph) -> Option<usize>;
 }
 
+/// Typed tree-extraction index.
+///
+/// The backing map is an `AHashMap`; its iteration order is not part of the
+/// determinism contract. Traverse from the root instead.
 pub trait IndexFor<Token: TokenOpaqueMarker> {
     type Enum: Copy + Eq;
     fn get_map(&self) -> &AHashMap<Token, (usize, Vec<Self::Enum>)>;
@@ -48,8 +52,14 @@ pub trait IndexFor<Token: TokenOpaqueMarker> {
     }
 }
 
+/// Tree-extraction driver.
+///
+/// Constructors are applied in registration order and each callback sorts its
+/// rows by egglog `Value`, making the fixpoint order deterministic for a fixed
+/// egraph. This relies on stable `Value` allocation; the testkit `Nat` enforces
+/// that with a single-thread EGraph pool. The output index map is unordered.
 #[derive(Default)]
-pub struct Extractor<Index>(AHashMap<TypeId, Box<dyn Fn(&mut Index, &EGraph) -> bool>>);
+pub struct Extractor<Index>(Vec<(TypeId, Box<dyn Fn(&mut Index, &EGraph) -> bool>)>);
 
 impl<Index: Default> Extractor<Index> {
     pub fn extract(self, eg: &EGraph) -> Index {
@@ -57,7 +67,7 @@ impl<Index: Default> Extractor<Index> {
         let mut keep_going = true;
         while keep_going {
             keep_going = false;
-            for cst in self.0.values() {
+            for (_, cst) in &self.0 {
                 keep_going |= (cst)(&mut index, eg);
             }
         }
@@ -69,18 +79,30 @@ impl<Index: Default> Extractor<Index> {
         Index: IndexFor<C::Output, Enum = C::Enum>,
         S: Schema<Inputs = C::Inputs, Output = C::Output, AllowAdd = True>,
     {
-        self.0.insert(
-            TypeId::of::<C>(),
-            Box::new(move |index, eg| {
-                let mut updated = false;
-                eg.for_each_row(table, |inputs, output| {
-                    if let Some(cost) = C::cost(inputs, index, eg) {
-                        updated |= index.update(output, cost, C::into_variant(inputs));
-                    };
-                });
-                updated
-            }),
-        );
+        let tid = TypeId::of::<C>();
+        let callback: Box<dyn Fn(&mut Index, &EGraph) -> bool> = Box::new(move |index, eg| {
+            let mut updated = false;
+            // Sort rows so the fixpoint update order is stable.
+            let mut rows = Vec::new();
+            eg.for_each_row(table, |inputs, output| {
+                rows.push((inputs.into_egglog_vec(), inputs, output));
+            });
+            rows.sort_unstable_by(|a, b| {
+                a.0.cmp(&b.0)
+                    .then_with(|| a.2.into_egglog().cmp(&b.2.into_egglog()))
+            });
+            for (_, inputs, output) in rows {
+                if let Some(cost) = C::cost(inputs, index, eg) {
+                    updated |= index.update(output, cost, C::into_variant(inputs));
+                };
+            }
+            updated
+        });
+        if let Some((_, slot)) = self.0.iter_mut().find(|(id, _)| *id == tid) {
+            *slot = callback;
+        } else {
+            self.0.push((tid, callback));
+        }
     }
 }
 

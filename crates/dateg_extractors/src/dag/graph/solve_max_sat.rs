@@ -48,6 +48,9 @@ impl<'a> DagExtractor<'a> {
         })?;
 
         let mut ctx = ctx;
+        // Wall-clock delta, not a constant: runs near the budget can take
+        // different refinement paths. The encoding order itself is
+        // deterministic for a fixed graph.
         if let Some(timeout) = remaining(deadline)? {
             let millis = u64::try_from(timeout.as_millis())
                 .unwrap_or(u64::MAX)

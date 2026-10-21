@@ -13,6 +13,12 @@ mod solve_naive;
 #[cfg(test)]
 mod tests;
 
+/// Extraction graph.
+///
+/// Node ids and adjacency order follow insertion order; [`Self::add_vertex`]
+/// and [`Self::add_edges`] preserve it. Extraction algorithms may rely on this
+/// order for deterministic tie-breaking, but must not iterate hash maps or
+/// treat wall-clock cutoffs as deterministic. Root order is caller-provided.
 #[derive(Default)]
 pub struct Graph {
     graph: DiGraph<Vertex, ()>,
@@ -83,6 +89,8 @@ impl Graph {
         }
     }
 
+    /// Set roots in the given order. With multiple roots, this order is part
+    /// of the solver input; callers must provide a deterministic order.
     pub fn set_roots(&mut self, root: impl IntoIterator<Item = VertexId>) {
         self.roots = root.into_iter().collect();
     }
@@ -96,6 +104,13 @@ impl Graph {
     }
 
     /// Solve the graph.
+    ///
+    /// Determinism contract for all solver implementations, including ones that
+    /// do not use z3: node/edge/root/conflict-group order is deterministic for a
+    /// fixed graph construction. The algorithm must still make deterministic
+    /// choices itself (tie-breaking, no hash-map iteration, fixed RNG seeds,
+    /// deterministic parallel merge/order) and must not treat `deadline` as a
+    /// deterministic cutoff; it is wall-clock.
     ///
     /// `stats` is an optional out-param: when present, common graph metrics and
     /// solver-specific counters/timings are recorded.

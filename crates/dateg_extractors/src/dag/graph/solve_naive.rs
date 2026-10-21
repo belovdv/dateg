@@ -11,6 +11,8 @@ pub fn solve(g: &Graph, deadline: Option<Instant>) -> Result<(usize, Vec<bool>),
     let mut best_assignment = vec![false; n];
     let max_mask = 1u64 << n;
 
+    // Masks are visited in node-id order, so equal-cost candidates are resolved
+    // deterministically by node order.
     for mask in 0..max_mask {
         if mask % 1024 == 0 {
             check_deadline(deadline)?;

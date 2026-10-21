@@ -249,3 +249,103 @@ fn solver_config_and_stats() {
     let failure = solve_naive(&mut g).unwrap_err();
     assert!(matches!(failure, ExtractError::Unsolvable));
 }
+
+/// The same abstract graph has multiple optimal assignments when built in
+/// different orders: both MaxSAT and the non-z3 exhaustive solver pick different
+/// ones. Once the construction order is fixed, repeated extractions must agree.
+/// This makes the determinism assertion non-vacuous.
+#[test]
+fn ambiguous_extraction_is_deterministic_by_construction_order() {
+    let attrs = [
+        (false, 3),
+        (false, 0),
+        (false, 0),
+        (true, 4),
+        (true, 0),
+        (true, 3),
+        (true, 0),
+        (false, 0),
+        (false, 1),
+        (false, 0),
+    ];
+    let edges = [
+        (0, 3),
+        (0, 6),
+        (0, 1),
+        (1, 4),
+        (1, 5),
+        (1, 7),
+        (1, 9),
+        (2, 5),
+        (4, 3),
+        (4, 0),
+        (4, 8),
+        (7, 4),
+        (7, 6),
+        (8, 6),
+        (8, 1),
+        (9, 1),
+        (9, 5),
+    ];
+    let groups: [&[usize]; 1] = [&[2, 3]];
+
+    fn build(
+        perm: &[usize],
+        attrs: &[(bool, usize)],
+        edges: &[(usize, usize)],
+        groups: &[&[usize]],
+    ) -> Graph {
+        let mut new_id = vec![0; attrs.len()];
+        for (index, &old) in perm.iter().enumerate() {
+            new_id[old] = index;
+        }
+        let mut g = Graph::default();
+        for &old in perm {
+            let (is_all, cost) = attrs[old];
+            g.add_vertex(is_all, cost, || None);
+        }
+        g.set_roots([new_id[0]]);
+        for &(from, to) in edges {
+            g.add_edges(new_id[from], [new_id[to]]);
+        }
+        for group in groups {
+            g.add_conflicting_group(group.iter().map(|&value| new_id[value]));
+        }
+        g
+    }
+
+    fn run_maxsat(g: &mut Graph) -> (usize, Vec<bool>) {
+        let solution = g.solve_with(&maxsat(), None, &mut StatsSink(None)).unwrap();
+        (solution.cost, solution.assignment)
+    }
+
+    fn run_naive(g: &mut Graph) -> (usize, Vec<bool>) {
+        let solution = solve_naive(g).unwrap();
+        (solution.cost, solution.assignment)
+    }
+
+    let identity: Vec<usize> = (0..attrs.len()).collect();
+    let reordered = [1, 6, 4, 5, 3, 2, 9, 7, 8, 0];
+
+    let mut g = build(&identity, &attrs, &edges, &groups);
+    let maxsat_identity = run_maxsat(&mut g);
+    let mut g = build(&reordered, &attrs, &edges, &groups);
+    let maxsat_reordered = run_maxsat(&mut g);
+
+    let mut g = build(&identity, &attrs, &edges, &groups);
+    let naive_identity = run_naive(&mut g);
+    let mut g = build(&reordered, &attrs, &edges, &groups);
+    let naive_reordered = run_naive(&mut g);
+
+    assert_eq!(maxsat_identity.0, maxsat_reordered.0);
+    assert_ne!(maxsat_identity.1, maxsat_reordered.1);
+    assert_eq!(naive_identity.0, naive_reordered.0);
+    assert_ne!(naive_identity.1, naive_reordered.1);
+
+    for _ in 0..4 {
+        let mut g = build(&identity, &attrs, &edges, &groups);
+        assert_eq!(maxsat_identity, run_maxsat(&mut g));
+        let mut g = build(&identity, &attrs, &edges, &groups);
+        assert_eq!(naive_identity, run_naive(&mut g));
+    }
+}
