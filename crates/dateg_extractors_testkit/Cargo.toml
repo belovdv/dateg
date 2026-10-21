@@ -1,0 +1,11 @@
+[package]
+name = "dateg_extractors_testkit"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+dateg.path = "../dateg"
+dateg_extractors.path = "../dateg_extractors"
+rand = "0.9"
+rayon = "1.12.0"

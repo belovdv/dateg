@@ -42,12 +42,10 @@ pub trait IndexFor<Token: TokenOpaqueMarker> {
     }
     fn insert(&mut self, token: Token, value: Self::Enum) {
         let was = self.get_map_mut().insert(token, value);
-        // Note: multiple constructors can be picked if cost is 0.
-        // TODO: add mutual exclusion for such constructors.
-        // assert!(was.is_none());
-        if was.is_some() {
-            log::warn!("multiple constructors were picked, one was ignored")
-        }
+        assert!(
+            was.is_none(),
+            "multiple constructors were picked for the same value"
+        );
     }
 }
 
@@ -60,6 +58,7 @@ pub struct Extractor<Index> {
 
     values: AHashMap<Value, VertexId>,
     constructors: AHashMap<(FunctionId, Vec<Value>), VertexId>,
+    alternatives: AHashMap<VertexId, Vec<VertexId>>,
     consumers: AHashMap<VertexId, AHashSet<VertexId>>,
 
     callbacks_init_v: AHashMap<TypeId, Box<dyn Fn(&mut Self, &EGraph)>>,
@@ -165,6 +164,10 @@ impl<Index: Default> Extractor<Index> {
         for init_c in std::mem::take(&mut self.callbacks_init_c).values() {
             (init_c)(self, eg);
         }
+        for (value, alternatives) in std::mem::take(&mut self.alternatives) {
+            self.dag.add_conflicting_group(alternatives.iter().copied());
+            self.dag.add_edges(value, alternatives);
+        }
         for consumed_by in self.consumers.values() {
             self.dag.add_conflicting_group(consumed_by.iter().copied());
         }
@@ -234,7 +237,6 @@ impl<Index: Default> Extractor<Index> {
         self.callbacks_init_v.insert(tid, Box::new(init_v));
 
         let init_c = move |ext: &mut Self, eg: &EGraph| {
-            let mut options: AHashMap<VertexId, Vec<VertexId>> = Default::default();
             eg.for_each_row(table, |inputs, output_| {
                 let output = output_.into_egglog();
                 if inputs
@@ -255,7 +257,8 @@ impl<Index: Default> Extractor<Index> {
                 assert!(was.is_none());
                 ext.dag
                     .add_edges(cstr, inputs.into_non_primitive().map(|v| ext.values[&v]));
-                options.entry(ext.values[&output]).or_default().push(cstr);
+                let value = ext.values[&output];
+                ext.alternatives.entry(value).or_default().push(cstr);
                 for consumed in custom_consumes(inputs)
                     .into_iter()
                     .map(|value| ext.values[&value])
@@ -263,9 +266,6 @@ impl<Index: Default> Extractor<Index> {
                     ext.consumers.entry(consumed).or_default().insert(cstr);
                 }
             });
-            for (value, constructors) in options {
-                ext.dag.add_edges(value, constructors);
-            }
         };
         self.callbacks_init_c.insert(tid, Box::new(init_c));
 
@@ -294,7 +294,6 @@ impl<Index: Default> Extractor<Index> {
         self.callbacks_init_v.insert(tid, Box::new(init_v));
 
         let init_c = move |ext: &mut Self, eg: &EGraph| {
-            let mut options: AHashMap<VertexId, Vec<VertexId>> = Default::default();
             eg._inner()
                 .container_values()
                 .for_each::<C>(|inputs, output| {
@@ -304,11 +303,9 @@ impl<Index: Default> Extractor<Index> {
                     let cont = ext.dag.add_vertex(true, 0, || Some(format!("cContainer")));
                     ext.dag
                         .add_edges(cont, ContainerValue::iter(inputs).map(|v| ext.values[&v]));
-                    options.entry(ext.values[&output]).or_default().push(cont);
+                    let value = ext.values[&output];
+                    ext.alternatives.entry(value).or_default().push(cont);
                 });
-            for (value, container) in options {
-                ext.dag.add_edges(value, container);
-            }
         };
         self.callbacks_init_c.insert(tid, Box::new(init_c));
     }

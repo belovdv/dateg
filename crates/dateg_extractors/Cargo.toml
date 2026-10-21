@@ -15,6 +15,5 @@ du_utils_timed = { git = "https://github.com/belovdv/du_utils.git", rev = "6adc4
 petgraph = "0.8.3"
 
 [dev-dependencies]
-env_logger.workspace = true
-rayon = "1"
-rand = "*"
+rand = "0.9"
+rayon = "1.12.0"
