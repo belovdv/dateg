@@ -114,10 +114,10 @@ fn nat_case(name: &'static str, tier: Tier, max_value: usize, max_cost: usize) -
         move |algorithm| {
             let (mut m, _) = inc_chain(max_value);
             saturate(&mut m, &["tree"]);
-            for value in 1..=max_value {
+            for (value, expected_cost) in costs.iter().enumerate().take(max_value + 1).skip(1) {
                 let root = m.get_val(value).canon(&m.eg);
                 let (cost, evaluated) = extract_expr_eval(&m, root, algorithm)?;
-                assert_eq!(cost, costs[value], "value {value}");
+                assert_eq!(cost, *expected_cost, "value {value}");
                 assert_eq!(evaluated, value, "value {value}");
             }
             Ok(costs[max_value])

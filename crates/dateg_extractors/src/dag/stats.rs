@@ -34,6 +34,10 @@ impl ExtractStats {
 pub(crate) struct StatsSink<'a>(pub(crate) Option<&'a mut ExtractStats>);
 
 impl StatsSink<'_> {
+    pub(crate) fn enabled(&self) -> bool {
+        self.0.is_some()
+    }
+
     pub(crate) fn count(&mut self, key: &'static str, value: u64) {
         if let Some(stats) = self.0.as_deref_mut() {
             stats.count(key, value);

@@ -38,8 +38,10 @@ impl Algorithm {
     /// Slow/soak cases may use a larger solver budget; fast cases stay short.
     pub fn for_tier(&self, tier: Tier) -> Algorithm {
         let mut algorithm = self.clone();
-        if matches!(tier, Tier::Slow | Tier::Soak) {
-            algorithm.timeout = algorithm.timeout.max(Duration::from_secs(60));
+        match tier {
+            Tier::Fast => {}
+            Tier::Slow => algorithm.timeout = algorithm.timeout.max(Duration::from_secs(60)),
+            Tier::Soak => algorithm.timeout = algorithm.timeout.max(Duration::from_secs(600)),
         }
         algorithm
     }

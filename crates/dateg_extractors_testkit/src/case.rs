@@ -23,6 +23,7 @@ pub enum SourceKind {
     RandomDense,
     Consumption,
     RandomMemory,
+    Generated,
     UseCase,
     Failure,
 }

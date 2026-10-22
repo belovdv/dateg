@@ -2,7 +2,7 @@ use dateg::TokenOpaque;
 
 use crate::case::{Case, Complexity, Expected, Purpose, SourceKind, Tier};
 use crate::indexes::mem::extract_int;
-use crate::memory::{Int, Memory, saturate};
+use crate::memory::{Int, Memory, saturate_with_assoc};
 
 fn fixture() -> (Memory, TokenOpaque<Int>, usize) {
     let mut m = Memory::default();
@@ -11,7 +11,7 @@ fn fixture() -> (Memory, TokenOpaque<Int>, usize) {
     let b = m.add_mul(a, one);
     let c = m.add_add(a, b);
     let d = m.add_add(c, one);
-    saturate(&mut m, &["tree", "ac"]);
+    saturate_with_assoc(&mut m, &["tree", "comm"]);
     let root = d.canon(&m.eg);
     let size = m.term_count();
     (m, root, size)

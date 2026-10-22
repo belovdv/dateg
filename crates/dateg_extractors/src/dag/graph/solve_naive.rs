@@ -35,7 +35,7 @@ pub fn solve(g: &Graph, deadline: Option<Instant>) -> Result<(usize, Vec<bool>),
     }
 
     if best_cost == usize::MAX {
-        Err(ExtractError::Unsolvable)
+        Err(ExtractError::Unsolved)
     } else {
         Ok((best_cost, best_assignment))
     }

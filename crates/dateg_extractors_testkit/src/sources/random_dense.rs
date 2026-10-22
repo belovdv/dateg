@@ -3,7 +3,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::case::{Case, Complexity, Expected, Purpose, SourceKind, Tier};
 use crate::indexes::mem::extract_int;
-use crate::memory::{Int, Memory, saturate};
+use crate::memory::{Int, Memory, saturate_with_assoc};
 
 /// Builds a parameterized DAG from a value pool: `inc_count` unary nodes, then
 /// `mul_count` binary nodes whose operands are drawn from the growing pool, so
@@ -30,7 +30,7 @@ fn fixture(seed: u64, inc_count: usize, mul_count: usize) -> (Memory, TokenOpaqu
     }
 
     let root = *pool.last().unwrap();
-    saturate(&mut m, &["tree", "ac"]);
+    saturate_with_assoc(&mut m, &["tree", "comm"]);
     let root = root.canon(&m.eg);
     let size = m.term_count();
     (m, root, size)

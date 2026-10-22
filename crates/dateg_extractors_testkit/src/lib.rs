@@ -1,4 +1,5 @@
 pub mod algorithms;
+pub mod bench;
 pub mod case;
 pub mod indexes;
 pub mod memory;

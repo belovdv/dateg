@@ -152,7 +152,7 @@ impl<'a> DagExtractor<'a> {
             .map_err(|error| ExtractError::Other(error.into()))?
         {
             easy_smt::Response::Sat => {}
-            easy_smt::Response::Unsat => return Err(ExtractError::Unsolvable),
+            easy_smt::Response::Unsat => return Err(ExtractError::Unsolved),
             easy_smt::Response::Unknown if self.deadline.is_some() => {
                 return Err(ExtractError::Timeout);
             }

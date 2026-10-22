@@ -11,6 +11,9 @@ theory!(Memory(
     (ty usize)
 )(
     (constructor init () Mem)
+    // Constructor roles (cost and `consumes`) are not declared here: the
+    // extractor index does that. In `indexes/mem.rs`, `store` consumes the
+    // memory token and `load` does not.
     (constructor store (Mem Int Int) Mem)
     (constructor load (Mem Int) Int)
 
@@ -35,13 +38,6 @@ theory!(Memory(
     (evaluation expr1_v (Int) Ints { |(a,)| ContainerVec(vec![a]) })
     (evaluation expr2_v (Int Int) Ints { |(a, b)| ContainerVec(vec![a, b]) })
     (evaluation_partial usize_neq (usize usize) () { |(a, b)| if a != b { Some(()) } else { None } })
-    (evaluation usize_min (usize usize) usize { |(a, b)| std::cmp::min(a, b) })
-    (evaluation usize_max (usize usize) usize { |(a, b)| std::cmp::max(a, b) })
-    (evaluation usize_add (usize usize) usize { |(a, b)| a.wrapping_add(b) })
-    (evaluation_partial ult_usize (usize usize) () { |(a, b)| (a < b).then_some(()) })
-
-    (function generation_cost (Int) usize :merge usize_min)
-
     (relation neq (Int Int))
     (relation is_comas (String))
 
@@ -82,6 +78,34 @@ theory!(Memory(
     (birewrite (add (mul x y) y) (mul (inc x) y))
     (birewrite (mul x x) (square x))
 
+    (set_ruleset_active "square_mul_l2r")
+    (rewrite (mul x x) (square x))
+
+    (set_ruleset_active "square_mul_r2l")
+    (rewrite (square x) (mul x x))
+
+    (set_ruleset_active "mul_add")
+    (birewrite (inc x) (add x (one)))
+    (birewrite (add (mul x y) y) (mul (inc x) y))
+
+    (set_ruleset_active "read_after_write")
+    (rewrite (load (store mem addr val) addr) val)
+    (rewrite (store mem addr (load mem addr)) mem)
+
+    (set_ruleset_active "store_reorder")
+    (rewrite
+        (store (store mem addr1 val1) addr2 val2)
+        (store (store mem addr2 val2) addr1 val1)
+        if (contains (neq addr1 addr2))
+    )
+    (rewrite (store (store mem addr _) addr val) (store mem addr val))
+    (rule
+        (query a (cst ca))
+        (query b (cst cb))
+        (query _ (usize_neq ca cb))
+        (insert (neq a b))
+    )
+
     (set_ruleset_active "arith")
     (rewrite (add a {zero}) a)
     (rewrite (sub a a) {zero})
@@ -90,113 +114,16 @@ theory!(Memory(
     (rewrite (neg a) (sub {zero} a))
     (rewrite (neg (neg x)) x)
 
-    (set_ruleset_active "ac")
-    (rule (query x (one)) (set {#0usize} (generation_cost x)))
-    (rule (query x (cst _)) (set {#0usize} (generation_cost x)))
-    (rule (query x (var _)) (set {#0usize} (generation_cost x)))
-    (rule (query x (load _ _)) (set {#0usize} (generation_cost x)))
-    (rule (query x (expr _ _)) (set {#0usize} (generation_cost x)))
-    (rule (query x (expr_v _ _)) (set {#0usize} (generation_cost x)))
-    (rule
-        (query x (inc a))
-        (query cost_a (generation_cost a))
-        (add cost (usize_add cost_a {#1usize}))
-        (set cost (generation_cost x))
-    )
-    (rule
-        (query x (dec a))
-        (query cost_a (generation_cost a))
-        (add cost (usize_add cost_a {#1usize}))
-        (set cost (generation_cost x))
-    )
-    (rule
-        (query x (neg a))
-        (query cost_a (generation_cost a))
-        (add cost (usize_add cost_a {#1usize}))
-        (set cost (generation_cost x))
-    )
-    (rule
-        (query x (square a))
-        (query cost_a (generation_cost a))
-        (add cost (usize_add cost_a {#1usize}))
-        (set cost (generation_cost x))
-    )
-    (rule
-        (query x (sub a b))
-        (query cost_a (generation_cost a))
-        (query cost_b (generation_cost b))
-        (add cost_max (usize_max cost_a cost_b))
-        (add cost (usize_add cost_max {#1usize}))
-        (set cost (generation_cost x))
-    )
-    (rule
-        (query x (add a b))
-        (query cost_a (generation_cost a))
-        (query cost_b (generation_cost b))
-        (add cost_max (usize_max cost_a cost_b))
-        (add cost (usize_add cost_max {#1usize}))
-        (set cost (generation_cost x))
-    )
-    (rule
-        (query x (mul a b))
-        (query cost_a (generation_cost a))
-        (query cost_b (generation_cost b))
-        (add cost_max (usize_max cost_a cost_b))
-        (add cost (usize_add cost_max {#1usize}))
-        (set cost (generation_cost x))
-    )
-
+    (set_ruleset_active "comm")
     (rewrite (add a b) (add b a))
     (rewrite (mul a b) (mul b a))
 
-    (rule
-        (query bc (add b c))
-        (query abc (add a bc))
-        (query cost_a (generation_cost a))
-        (query cost_b (generation_cost b))
-        (query cost_max (usize_max cost_a cost_b))
-        (query _ (ult_usize cost_max {#4usize}))
-        (add ab (add a b))
-        (set abc (add ab c))
-        (add cost_ab (usize_add cost_max {#1usize}))
-        (set cost_ab (generation_cost ab))
-    )
-    (rule
-        (query ab (add a b))
-        (query abc (add ab c))
-        (query cost_b (generation_cost b))
-        (query cost_c (generation_cost c))
-        (query cost_max (usize_max cost_b cost_c))
-        (query _ (ult_usize cost_max {#4usize}))
-        (add bc (add b c))
-        (set abc (add a bc))
-        (add cost_bc (usize_add cost_max {#1usize}))
-        (set cost_bc (generation_cost bc))
-    )
-    (rule
-        (query bc (mul b c))
-        (query abc (mul a bc))
-        (query cost_a (generation_cost a))
-        (query cost_b (generation_cost b))
-        (query cost_max (usize_max cost_a cost_b))
-        (query _ (ult_usize cost_max {#4usize}))
-        (add ab (mul a b))
-        (set abc (mul ab c))
-        (add cost_ab (usize_add cost_max {#1usize}))
-        (set cost_ab (generation_cost ab))
-    )
-    (rule
-        (query ab (mul a b))
-        (query abc (mul ab c))
-        (query cost_b (generation_cost b))
-        (query cost_c (generation_cost c))
-        (query cost_max (usize_max cost_b cost_c))
-        (query _ (ult_usize cost_max {#4usize}))
-        (add bc (mul b c))
-        (set abc (mul a bc))
-        (add cost_bc (usize_add cost_max {#1usize}))
-        (set cost_bc (generation_cost bc))
-    )
+    // Applied once between saturation passes: this is the bound-1 behaviour.
+    (set_ruleset_active "assoc")
+    (rewrite (add a (add b c)) (add (add a b) c))
+    (rewrite (add (add a b) c) (add a (add b c)))
+    (rewrite (mul a (mul b c)) (mul (mul a b) c))
+    (rewrite (mul (mul a b) c) (mul a (mul b c)))
 
     (set_ruleset_active "alias")
     (rewrite (load (store mem addr val) addr) val)
@@ -245,6 +172,14 @@ pub fn saturate(m: &mut Memory, rulesets: &[&str]) {
         }
     }
     panic!("rulesets did not converge: {rulesets:?}");
+}
+
+/// Run the normal rulesets to saturation, apply associativity once, then
+/// saturate again (bounded associativity, without cost tracking).
+pub fn saturate_with_assoc(m: &mut Memory, rulesets: &[&str]) {
+    saturate(m, rulesets);
+    m.run_ruleset("assoc");
+    saturate(m, rulesets);
 }
 
 impl Memory {

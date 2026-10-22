@@ -11,6 +11,11 @@ fn fast(source: SourceKind) {
 }
 
 #[test]
+fn fast_generated() {
+    fast(SourceKind::Generated);
+}
+
+#[test]
 fn fast_handcrafted() {
     fast(SourceKind::Handcrafted);
 }

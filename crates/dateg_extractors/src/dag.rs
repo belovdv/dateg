@@ -196,9 +196,21 @@ impl<Index: Default> Extractor<Index> {
             self.dag.add_conflicting_group(alternatives.iter().copied());
             self.dag.add_edges(value, alternatives);
         }
+        let mut consumption_edges = 0usize;
+        let mut forked_values = 0usize;
+        let mut max_consumers = 0usize;
         for consumed_by in self.consumers.values() {
+            consumption_edges += consumed_by.len();
+            if consumed_by.len() > 1 {
+                forked_values += 1;
+            }
+            max_consumers = max_consumers.max(consumed_by.len());
             self.dag.add_conflicting_group(consumed_by.iter().copied());
         }
+        stats.count("graph.consumed_values", self.consumers.len() as u64);
+        stats.count("graph.consumption_edges", consumption_edges as u64);
+        stats.count("graph.forked_values", forked_values as u64);
+        stats.count("graph.max_consumers", max_consumers as u64);
 
         // TODO: the extractor could canonicalize here, but currently requires
         // the caller to do it.

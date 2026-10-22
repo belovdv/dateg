@@ -1,6 +1,7 @@
-use std::{sync::LazyLock, time::Instant};
+use std::{collections::BTreeSet, sync::LazyLock, time::Instant};
 
 use petgraph::{
+    Direction::{Incoming, Outgoing},
     algo::{is_cyclic_directed, tarjan_scc},
     graph::{DiGraph, NodeIndex},
     visit::{IntoNodeIdentifiers, NodeFiltered},
@@ -121,13 +122,7 @@ impl Graph {
         stats: &mut StatsSink<'_>,
     ) -> Result<Solution, ExtractError> {
         self.collect_usage();
-        stats.count("graph.nodes", self.graph.node_count() as u64);
-        stats.count("graph.edges", self.graph.edge_count() as u64);
-        stats.count(
-            "graph.used_nodes",
-            self.used.iter().filter(|&&used| used).count() as u64,
-        );
-        stats.count("graph.conflict_groups", self.conflict_groups.len() as u64);
+        self.record_metrics(stats);
         stats.text(
             "solver.name",
             match config {
@@ -167,6 +162,101 @@ impl Graph {
                 queue.extend(self.graph.neighbors(ni).map(|idx| idx.index()));
             }
         }
+    }
+
+    /// Record shape metrics of the root-reachable subgraph.
+    ///
+    /// These describe the solver input, not the solver's search path. Expensive
+    /// parts (degrees, SCCs, 4-cycles) run only when stats are enabled.
+    fn record_metrics(&self, stats: &mut StatsSink<'_>) {
+        stats.count("graph.nodes", self.graph.node_count() as u64);
+        stats.count("graph.edges", self.graph.edge_count() as u64);
+        stats.count("graph.roots", self.roots.len() as u64);
+        stats.count(
+            "graph.used_nodes",
+            self.used.iter().filter(|&&used| used).count() as u64,
+        );
+        stats.count("graph.conflict_groups", self.conflict_groups.len() as u64);
+        if !stats.enabled() {
+            return;
+        }
+
+        let mut used_edges = 0u64;
+        let mut max_out = 0u64;
+        let mut max_in = 0u64;
+        let mut and_nodes = 0u64;
+        let mut or_nodes = 0u64;
+        let mut or_leaves = 0u64;
+        let mut max_alternatives = 0u64;
+        let mut cost_sum = 0u64;
+        let mut cost_max = 0u64;
+        let mut cost_nonzero = 0u64;
+        let mut costs = BTreeSet::new();
+        for node in self.graph.node_indices() {
+            if !self.used[node.index()] {
+                continue;
+            }
+            let out = self
+                .graph
+                .neighbors_directed(node, Outgoing)
+                .filter(|next| self.used[next.index()])
+                .count() as u64;
+            let incoming = self
+                .graph
+                .neighbors_directed(node, Incoming)
+                .filter(|next| self.used[next.index()])
+                .count() as u64;
+            used_edges += out;
+            max_out = max_out.max(out);
+            max_in = max_in.max(incoming);
+            let vertex = &self.graph[node];
+            if vertex.is_all {
+                and_nodes += 1;
+            } else {
+                or_nodes += 1;
+                max_alternatives = max_alternatives.max(out);
+                if out == 0 {
+                    or_leaves += 1;
+                }
+            }
+            cost_sum += vertex.cost as u64;
+            cost_max = cost_max.max(vertex.cost as u64);
+            if vertex.cost > 0 {
+                cost_nonzero += 1;
+                costs.insert(vertex.cost);
+            }
+        }
+        stats.count("graph.used_edges", used_edges);
+        stats.count("graph.and_nodes", and_nodes);
+        stats.count("graph.or_nodes", or_nodes);
+        stats.count("graph.or_leaves", or_leaves);
+        stats.count("graph.max_out", max_out);
+        stats.count("graph.max_in", max_in);
+        stats.count("graph.max_alternatives", max_alternatives);
+        stats.count("graph.cost_sum", cost_sum);
+        stats.count("graph.cost_max", cost_max);
+        stats.count("graph.cost_nonzero", cost_nonzero);
+        stats.count("graph.cost_distinct", costs.len() as u64);
+
+        let mut used_group_members = 0u64;
+        let mut max_group = 0u64;
+        for group in &self.conflict_groups {
+            let members = group.iter().filter(|&&id| self.used[id]).count() as u64;
+            used_group_members += members;
+            max_group = max_group.max(members);
+        }
+        stats.count("graph.conflict_group_members", used_group_members);
+        stats.count("graph.conflict_group_max", max_group);
+
+        let sccs = self.detect_components(&self.used);
+        let scc_nodes: u64 = sccs.iter().map(|scc| scc.len() as u64).sum();
+        let scc_max = sccs.iter().map(|scc| scc.len() as u64).max().unwrap_or(0);
+        let scc_sum_squares: u64 = sccs.iter().map(|scc| (scc.len() * scc.len()) as u64).sum();
+        stats.count("graph.sccs", sccs.len() as u64);
+        stats.count("graph.scc_nodes", scc_nodes);
+        stats.count("graph.scc_max", scc_max);
+        stats.count("graph.scc_sum_squares", scc_sum_squares);
+        stats.count("graph.cycles_4", self.detect_cycles_4().len() as u64);
     }
 }
 

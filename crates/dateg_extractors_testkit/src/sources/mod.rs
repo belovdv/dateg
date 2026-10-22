@@ -2,6 +2,7 @@ use crate::case::Case;
 
 pub mod consumption;
 pub mod failures;
+pub mod generated;
 pub mod handcrafted;
 pub mod random_dense;
 pub mod random_memory;
@@ -13,6 +14,7 @@ pub fn all() -> Vec<Case> {
     let mut cases = Vec::new();
     cases.extend(consumption::cases());
     cases.extend(failures::cases());
+    cases.extend(generated::cases());
     cases.extend(handcrafted::cases());
     cases.extend(random_dense::cases());
     cases.extend(random_memory::cases());

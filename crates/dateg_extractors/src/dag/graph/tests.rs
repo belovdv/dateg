@@ -247,7 +247,7 @@ fn solver_config_and_stats() {
     g.set_roots([root]);
     g.add_edges(root, [leaf]);
     let failure = solve_naive(&mut g).unwrap_err();
-    assert!(matches!(failure, ExtractError::Unsolvable));
+    assert!(matches!(failure, ExtractError::Unsolved));
 }
 
 /// The same abstract graph has multiple optimal assignments when built in
