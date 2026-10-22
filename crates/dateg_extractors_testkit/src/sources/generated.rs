@@ -228,6 +228,36 @@ fn pick_addr(
 }
 
 pub fn build(params: Params) -> (Memory, TokenOpaque<Mem>, usize) {
+    let assoc = params.optional_rules.contains(&"assoc");
+    let mut rules = BASE_RULES.to_vec();
+    rules.extend(
+        params
+            .optional_rules
+            .iter()
+            .copied()
+            .filter(|rule| *rule != "assoc"),
+    );
+    build_with(params, move |m| {
+        if assoc {
+            saturate_with_assoc(m, &rules);
+        } else {
+            saturate(m, &rules);
+        }
+    })
+}
+
+/// Build the same program as [`build`], but saturate with an explicit ruleset
+/// order. `assoc` gets no special treatment here; it runs as an ordinary
+/// ruleset if included. Determinism tests use this to show that rule order alone
+/// can change which extraction is selected.
+pub fn build_with_rules(params: Params, rulesets: &[&str]) -> (Memory, TokenOpaque<Mem>, usize) {
+    build_with(params, |m| saturate(m, rulesets))
+}
+
+fn build_with(
+    params: Params,
+    run_saturation: impl FnOnce(&mut Memory),
+) -> (Memory, TokenOpaque<Mem>, usize) {
     let mut m = Memory::default();
     let mut rng = StdRng::seed_from_u64(params.seed);
     let one = m.add_one();
@@ -275,20 +305,7 @@ pub fn build(params: Params) -> (Memory, TokenOpaque<Mem>, usize) {
         }
     }
 
-    let assoc = params.optional_rules.contains(&"assoc");
-    let mut rules = BASE_RULES.to_vec();
-    rules.extend(
-        params
-            .optional_rules
-            .iter()
-            .copied()
-            .filter(|rule| *rule != "assoc"),
-    );
-    if assoc {
-        saturate_with_assoc(&mut m, &rules);
-    } else {
-        saturate(&mut m, &rules);
-    }
+    run_saturation(&mut m);
 
     // Final action is always a store over the current (last) memory.
     let addr = pick_addr(&mut rng, params.weights, &ints, &addrs);
