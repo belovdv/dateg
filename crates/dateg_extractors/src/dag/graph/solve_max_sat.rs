@@ -47,18 +47,6 @@ impl<'a> DagExtractor<'a> {
                 .map_err(|error| ExtractError::Other(error.into()))
         })?;
 
-        let mut ctx = ctx;
-        // Wall-clock delta, not a constant: runs near the budget can take
-        // different refinement paths. The encoding order itself is
-        // deterministic for a fixed graph.
-        if let Some(timeout) = remaining(deadline)? {
-            let millis = u64::try_from(timeout.as_millis())
-                .unwrap_or(u64::MAX)
-                .max(1);
-            ctx.set_option(":timeout", ctx.numeral(millis))
-                .map_err(|error| ExtractError::Other(error.into()))?;
-        }
-
         let mut r = Self {
             g,
             ctx,
@@ -140,11 +128,27 @@ impl<'a> DagExtractor<'a> {
         self.ctx.declare_const(name, self.ctx.atoms().bool).unwrap()
     }
 
+    /// z3's timeout is per check, so refresh it from the actual remaining
+    /// budget before every check. Setting it once at construction lets a late
+    /// check spend the whole original budget past the deadline.
+    fn refresh_timeout(&mut self) -> Result<(), ExtractError> {
+        if let Some(timeout) = remaining(self.deadline)? {
+            let millis = u64::try_from(timeout.as_millis())
+                .unwrap_or(u64::MAX)
+                .max(1);
+            self.ctx
+                .set_option(":timeout", self.ctx.numeral(millis))
+                .map_err(|error| ExtractError::Other(error.into()))?;
+        }
+        Ok(())
+    }
+
     /// Increment for search.
     ///
     /// Returns `Blocked` when cycles were blocked and another step is required.
     fn try_solve(&mut self) -> Result<Step, ExtractError> {
         check_deadline(self.deadline)?;
+        self.refresh_timeout()?;
 
         match self
             .ctx
