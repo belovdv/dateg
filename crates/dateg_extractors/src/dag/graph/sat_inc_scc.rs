@@ -153,7 +153,7 @@ impl<'a> SatIncSccExtractor<'a> {
             initial_steps += 1;
             stats.count("sat.inc_scc.initial_steps", initial_steps);
             match self.core.check(None) {
-                Ok(Check::Unsat) => break 'first Err(ExtractError::Unsolved),
+                Ok(Check::Unsat) => break 'first Err(ExtractError::Unsolvable),
                 Ok(Check::Sat(selected)) => {
                     let blocked = self.core.block_cycles(&selected, self.cycle_blocking);
                     if blocked.is_empty() {
@@ -172,7 +172,9 @@ impl<'a> SatIncSccExtractor<'a> {
                 Some(seed) if seed.0 <= first.0 => seed,
                 _ => first,
             },
-            Err(error @ (ExtractError::Timeout | ExtractError::Unsolved)) => match seed {
+            Err(
+                error @ (ExtractError::Timeout | ExtractError::Unsolved | ExtractError::Unsolvable),
+            ) => match seed {
                 Some(seed) => {
                     timed_out = true;
                     seed

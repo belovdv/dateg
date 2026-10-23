@@ -5,10 +5,11 @@ pub enum ExtractError {
     RootNotCanonical,
     /// The root is not present in the selected constructor tables.
     RootMissing,
-    /// The solver found no valid acyclic assignment. For `Naive` this is a
-    /// proof that none exists; for the heuristic and imprecise solvers it is
-    /// not.
+    /// The solver found no valid acyclic assignment but did not prove that
+    /// none exists (heuristic or imprecise solvers).
     Unsolved,
+    /// The solver proved that no valid acyclic assignment exists.
+    Unsolvable,
     /// The configured wall-clock budget was exhausted.
     Timeout,
     /// The solver produced an assignment that failed validation.
@@ -23,6 +24,7 @@ impl std::fmt::Display for ExtractError {
             Self::RootNotCanonical => write!(f, "please canonicalize root token"),
             Self::RootMissing => write!(f, "root value is not present in the extracted tables"),
             Self::Unsolved => write!(f, "solver found no solution"),
+            Self::Unsolvable => write!(f, "solver proved no solution exists"),
             Self::Timeout => write!(f, "solver timed out"),
             Self::InvalidSolution => write!(f, "solver produced an invalid assignment"),
             Self::Other(error) => error.fmt(f),

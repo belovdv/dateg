@@ -40,7 +40,7 @@ impl Fallback {
     fn catches(self, error: &ExtractError) -> bool {
         match error {
             ExtractError::Timeout => true,
-            ExtractError::Unsolved => self != Self::Timeout,
+            ExtractError::Unsolved | ExtractError::Unsolvable => self != Self::Timeout,
             _ => self == Self::AnyError,
         }
     }

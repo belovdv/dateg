@@ -192,7 +192,7 @@ pub fn cases() -> Vec<Case> {
         case!(
             "hand/container_cost_filtered_out",
             Fast,
-            Expected::Failure("solver found no solution"),
+            Expected::Failure("solver proved no solution exists"),
             |algorithm| {
                 let mut m = Memory::default();
                 let container = m.add_container_value(dateg::ContainerVec(vec![]));

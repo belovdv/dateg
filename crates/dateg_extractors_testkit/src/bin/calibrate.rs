@@ -34,7 +34,7 @@ fn try_steps(params: Params, timeout: Duration) -> Outcome {
             time: started.elapsed(),
         },
         Err(ExtractError::Timeout) => Outcome::Timeout,
-        Err(ExtractError::Unsolved) => Outcome::Unsolved,
+        Err(ExtractError::Unsolved | ExtractError::Unsolvable) => Outcome::Unsolved,
         Err(_) => Outcome::Other,
     }
 }

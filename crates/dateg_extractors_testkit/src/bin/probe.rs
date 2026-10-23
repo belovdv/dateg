@@ -128,6 +128,7 @@ fn main() {
         Ok(_) => "solved",
         Err(ExtractError::Timeout) => "timeout",
         Err(ExtractError::Unsolved) => "unsolved",
+        Err(ExtractError::Unsolvable) => "unsolvable",
         Err(_) => "other",
     };
     fields.push(format!("status={status}"));

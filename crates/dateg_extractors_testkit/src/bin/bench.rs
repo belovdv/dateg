@@ -225,6 +225,7 @@ fn run_algorithm(
                 },
                 Ok(Err(ExtractError::Timeout)) => ("timeout", None, false),
                 Ok(Err(ExtractError::Unsolved)) => ("unsolved", None, false),
+                Ok(Err(ExtractError::Unsolvable)) => ("unsolvable", None, false),
                 Ok(Err(_)) => ("error", None, false),
                 Err(_) => ("panic", None, false),
             };

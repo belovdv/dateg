@@ -47,6 +47,25 @@ fn case(
     }
 }
 
+/// Unmeasured case used to widen the A/B corpus (AC, reordering, longer
+/// programs). No reference cost; a valid solution counts as a pass, as with the
+/// top-rung open cases. The reference time is infinite so these sort last.
+fn coverage_case(name: &'static str, seed: u64, steps: usize, rules: &'static str) -> BenchCase {
+    BenchCase {
+        name,
+        params: Params {
+            seed,
+            steps,
+            weights: memory_weights(),
+            optional_rules: rules_by_name(rules),
+            addresses: DEFAULT_ADDRESSES,
+        },
+        expected_cost: None,
+        reference_seconds: f64::INFINITY,
+        reference_exact: false,
+    }
+}
+
 /// A rung the reference could not finish: no known optimum, only a lower bound
 /// on its runtime. Pass means "returned a valid solution"; optimality is not
 /// checked because there is no reference answer.
@@ -331,6 +350,22 @@ pub fn cases() -> Vec<BenchCase> {
             DEFAULT_ADDRESSES,
             1410.0,
         ),
+        // Coverage corpus: AC, write reordering, longer programs, and cases
+        // where the chain heuristic runs out of rollbacks. No reference cost.
+        coverage_case("coverage_ac_s15_60", 15, 60, "assoc_reorder"),
+        coverage_case("coverage_ac_s15_100", 15, 100, "assoc_reorder"),
+        coverage_case("coverage_ac_s6_100", 6, 100, "assoc_reorder"),
+        coverage_case("coverage_ac_s17_100", 17, 100, "assoc_reorder"),
+        coverage_case("coverage_ac_s19_100", 19, 100, "assoc_reorder"),
+        coverage_case("coverage_ac_s23_100", 23, 100, "assoc_reorder"),
+        coverage_case("coverage_assoc_s5_80", 5, 80, "assoc"),
+        coverage_case("coverage_assoc_s15_80", 15, 80, "assoc"),
+        coverage_case("coverage_reorder_s15_180", 15, 180, "reorder"),
+        coverage_case("coverage_reorder_s6_180", 6, 180, "reorder"),
+        coverage_case("coverage_reorder_s5_180", 5, 180, "reorder"),
+        coverage_case("coverage_reorder_s17_200", 17, 200, "reorder"),
+        coverage_case("coverage_reorder_s22_148", 22, 148, "reorder"),
+        coverage_case("coverage_reorder_s19_148", 19, 148, "reorder"),
     ]
 }
 

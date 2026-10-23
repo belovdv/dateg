@@ -70,7 +70,7 @@ impl<'a> MaxSatIncSccExtractor<'a> {
     /// Increment for search.
     fn try_solve(&mut self) -> Result<Step, ExtractError> {
         match self.core.check(None)? {
-            Check::Unsat => Err(ExtractError::Unsolved),
+            Check::Unsat => Err(ExtractError::Unsolvable),
             Check::Sat(used) => {
                 let blocked = self.core.block_cycles(&used, self.cycle_blocking);
                 if blocked.is_empty() {
