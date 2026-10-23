@@ -39,7 +39,7 @@ pub use sat_inc_scc::SatIncSccConfig;
 /// order for deterministic tie-breaking, but must not iterate hash maps or
 /// treat wall-clock cutoffs as deterministic. Root order is caller-provided.
 #[derive(Default)]
-pub struct Graph {
+pub(crate) struct Graph {
     graph: DiGraph<Vertex, ()>,
     roots: Vec<VertexId>,
     used: Vec<bool>,
@@ -47,7 +47,7 @@ pub struct Graph {
     disabled: Vec<bool>,
     conflict_groups: Vec<Vec<VertexId>>,
 }
-pub type VertexId = usize;
+pub(crate) type VertexId = usize;
 #[derive(Debug)]
 struct Vertex {
     is_all: bool,
@@ -82,9 +82,9 @@ pub enum SolverConfig {
 }
 
 #[derive(Debug)]
-pub struct Solution {
-    pub assignment: Vec<bool>,
-    pub cost: usize,
+pub(crate) struct Solution {
+    pub(crate) assignment: Vec<bool>,
+    pub(crate) cost: usize,
 }
 
 impl Graph {
