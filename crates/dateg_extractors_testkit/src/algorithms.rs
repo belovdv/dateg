@@ -1,6 +1,8 @@
 use std::{sync::LazyLock, time::Duration};
 
-use dateg_extractors::dag::{ExtractOptions, SatIncSccConfig, SolverConfig};
+use dateg_extractors::dag::{
+    CombinatorConfig, ExtractOptions, FilterMode, SatIncSccConfig, SolverConfig,
+};
 
 use crate::case::{Complexity, Tier};
 
@@ -16,6 +18,8 @@ pub struct Algorithm {
     pub name: &'static str,
     pub config: SolverConfig,
     pub timeout: Duration,
+    /// Optional graph reduction applied before solving.
+    pub filtration: Option<FilterMode>,
     /// Maps case complexity to feasibility; calibrate from benchmarks/timeout
     /// data. `Slow` still runs, `Infeasible` is skipped.
     pub capacity: fn(Complexity) -> Fit,
@@ -31,6 +35,7 @@ impl Algorithm {
     pub fn options(&self) -> ExtractOptions {
         ExtractOptions::builder(self.config.clone())
             .timeout(Some(self.timeout))
+            .filtration(self.filtration)
             .build()
     }
 
@@ -83,6 +88,16 @@ pub static ALGORITHMS: LazyLock<Vec<Algorithm>> = LazyLock::new(|| {
             name: "maxsat.inc_scc",
             config: SolverConfig::MaxSatIncScc(Default::default()),
             timeout,
+            filtration: None,
+            capacity: maxsat_capacity,
+            oracles: &["naive"],
+            bench_only: false,
+        },
+        Algorithm {
+            name: "maxsat.filtered",
+            config: SolverConfig::MaxSatIncScc(Default::default()),
+            timeout,
+            filtration: Some(FilterMode::Optimal),
             capacity: maxsat_capacity,
             oracles: &["naive"],
             bench_only: false,
@@ -91,6 +106,34 @@ pub static ALGORITHMS: LazyLock<Vec<Algorithm>> = LazyLock::new(|| {
             name: "sat.inc_scc",
             config: SolverConfig::SatIncScc(SatIncSccConfig::default()),
             timeout,
+            filtration: None,
+            capacity: sat_capacity,
+            oracles: &[],
+            bench_only: true,
+        },
+        Algorithm {
+            name: "sat.filtered",
+            config: SolverConfig::SatIncScc(SatIncSccConfig::default()),
+            timeout,
+            filtration: Some(FilterMode::Validity),
+            capacity: sat_capacity,
+            oracles: &[],
+            bench_only: true,
+        },
+        Algorithm {
+            name: "combinator",
+            config: SolverConfig::Combinator(CombinatorConfig::default()),
+            timeout,
+            filtration: Some(FilterMode::Validity),
+            capacity: sat_capacity,
+            oracles: &[],
+            bench_only: true,
+        },
+        Algorithm {
+            name: "combinator.optimal",
+            config: SolverConfig::Combinator(CombinatorConfig::default()),
+            timeout,
+            filtration: Some(FilterMode::Optimal),
             capacity: sat_capacity,
             oracles: &[],
             bench_only: true,
@@ -99,6 +142,7 @@ pub static ALGORITHMS: LazyLock<Vec<Algorithm>> = LazyLock::new(|| {
             name: "naive",
             config: SolverConfig::Naive,
             timeout,
+            filtration: None,
             capacity: naive_capacity,
             oracles: &[],
             bench_only: false,
@@ -159,8 +203,9 @@ mod tests {
     #[test]
     fn filters_algorithm_names() {
         assert_eq!(matching("maxsat.inc_scc").len(), 1);
-        assert_eq!(matching("sat.*").len(), 1);
-        assert!(matching("sat.*").iter().all(|a| a.name == "sat.inc_scc"));
+        assert_eq!(matching("sat.*").len(), 2);
+        assert!(matching("sat.*").iter().all(|a| a.name.starts_with("sat.")));
+        assert_eq!(matching("combinator*").len(), 2);
         assert!(matching("no.such.algorithm").is_empty());
     }
 }

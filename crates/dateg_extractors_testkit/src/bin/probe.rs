@@ -23,10 +23,13 @@ use std::{
 
 use dateg_extractors::dag::{CycleBlocking, ExtractError, ExtractStats, SolverConfig, StatValue};
 use dateg_extractors_testkit::algorithms;
-use dateg_extractors_testkit::indexes::mem::extract_mem_with_stats;
+use dateg_extractors_testkit::indexes::mem::{CostModel, extract_mem_with_stats, set_cost_model};
 use dateg_extractors_testkit::sources::generated::{self, Params};
 
 fn main() {
+    if std::env::var("PROBE_COST_MODEL").as_deref() == Ok("weighted") {
+        set_cost_model(CostModel::Weighted);
+    }
     let seed = env_u64("PROBE_SEED", 1);
     let steps = env_usize("PROBE_STEPS", 4);
     let profile = std::env::var("PROBE_PROFILE").unwrap_or_else(|_| "memory".into());
@@ -103,6 +106,16 @@ fn main() {
             }
         }
         SolverConfig::Naive => {}
+        SolverConfig::Combinator(config) => {
+            if let Ok(value) = std::env::var("PROBE_FIRST_BUDGET_MS") {
+                config.first_budget = Some(Duration::from_millis(
+                    value.parse().expect("PROBE_FIRST_BUDGET_MS"),
+                ));
+            }
+            if let Ok(value) = std::env::var("PROBE_FIRST_SHARE") {
+                config.first_share = value.parse().expect("PROBE_FIRST_SHARE");
+            }
+        }
     }
 
     let mut stats = ExtractStats::default();

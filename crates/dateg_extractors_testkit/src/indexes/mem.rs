@@ -8,22 +8,54 @@ use dateg_extractors::dag::{ExtractError, index_dag};
 use crate::algorithms::Algorithm;
 use crate::memory::{Int, Mem, Memory};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CostModel {
+    Unit,
+    Weighted,
+}
+
+static COST_MODEL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Process-wide cost model for the testkit index. `probe` sets this before
+/// building an extraction; tests keep the default unit model.
+pub fn set_cost_model(model: CostModel) {
+    COST_MODEL.store(
+        u8::from(model == CostModel::Weighted),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+pub fn cost_model() -> CostModel {
+    if COST_MODEL.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        CostModel::Unit
+    } else {
+        CostModel::Weighted
+    }
+}
+
+fn cost(unit: usize, weighted: usize) -> usize {
+    match cost_model() {
+        CostModel::Unit => unit,
+        CostModel::Weighted => weighted,
+    }
+}
+
 index_dag!(MemIndex
     mem: MemEnum (datatype Mem
         MInit ()
-        MStore (Mem Int Int) { |_, _| Some(1) } { |(mem, ..)| (mem,) }
+        MStore (Mem Int Int) { |_, _| Some(cost(1, 10)) } { |(mem, ..)| (mem,) }
     )
     int: IntEnum (datatype Int
-        MCst (usize)
-        MVar (String)
-        MLoad (Mem Int)
-        MOne ()
-        MInc (Int)
-        MAdd (Int Int)
-        MSub (Int Int)
-        MNeg (Int)
-        MMul (Int Int)
-        MSquare (Int)
+        MCst (usize) { |_, _| Some(1) }
+        MVar (String) { |_, _| Some(1) }
+        MLoad (Mem Int) { |_, _| Some(cost(1, 5)) }
+        MOne () { |_, _| Some(1) }
+        MInc (Int) { |_, _| Some(1) }
+        MAdd (Int Int) { |_, _| Some(cost(1, 2)) }
+        MSub (Int Int) { |_, _| Some(cost(1, 2)) }
+        MNeg (Int) { |_, _| Some(1) }
+        MMul (Int Int) { |_, _| Some(cost(1, 3)) }
+        MSquare (Int) { |_, _| Some(cost(1, 3)) }
     )
 );
 
@@ -44,7 +76,7 @@ fn validate_node(
     }
     assert!(!visiting.contains(&node), "index cycle at {node:?}");
     visiting.insert(node);
-    let mut total = 1;
+    let mut total = 0;
     match node {
         Node::Mem(token) => {
             let value = index
@@ -52,8 +84,11 @@ fn validate_node(
                 .get(&token)
                 .unwrap_or_else(|| panic!("missing mem entry for {token:?}"));
             match value {
-                MemEnum::MInit() => {}
+                MemEnum::MInit() => {
+                    total += 1;
+                }
                 MemEnum::MStore(mem, addr, val) => {
+                    total += cost(1, 10);
                     total += validate_node(index, Node::Mem(*mem), visiting, done);
                     total += validate_node(index, Node::Int(*addr), visiting, done);
                     total += validate_node(index, Node::Int(*val), visiting, done);
@@ -66,15 +101,29 @@ fn validate_node(
                 .get(&token)
                 .unwrap_or_else(|| panic!("missing int entry for {token:?}"));
             match value {
-                IntEnum::MCst(_) | IntEnum::MVar(_) | IntEnum::MOne() => {}
+                IntEnum::MCst(_) | IntEnum::MVar(_) | IntEnum::MOne() => {
+                    total += 1;
+                }
                 IntEnum::MLoad(mem, addr) => {
+                    total += cost(1, 5);
                     total += validate_node(index, Node::Mem(*mem), visiting, done);
                     total += validate_node(index, Node::Int(*addr), visiting, done);
                 }
-                IntEnum::MInc(a) | IntEnum::MNeg(a) | IntEnum::MSquare(a) => {
+                IntEnum::MInc(a) | IntEnum::MNeg(a) => {
+                    total += 1;
                     total += validate_node(index, Node::Int(*a), visiting, done);
                 }
-                IntEnum::MAdd(a, b) | IntEnum::MSub(a, b) | IntEnum::MMul(a, b) => {
+                IntEnum::MSquare(a) => {
+                    total += cost(1, 3);
+                    total += validate_node(index, Node::Int(*a), visiting, done);
+                }
+                IntEnum::MAdd(a, b) | IntEnum::MSub(a, b) => {
+                    total += cost(1, 2);
+                    total += validate_node(index, Node::Int(*a), visiting, done);
+                    total += validate_node(index, Node::Int(*b), visiting, done);
+                }
+                IntEnum::MMul(a, b) => {
+                    total += cost(1, 3);
                     total += validate_node(index, Node::Int(*a), visiting, done);
                     total += validate_node(index, Node::Int(*b), visiting, done);
                 }

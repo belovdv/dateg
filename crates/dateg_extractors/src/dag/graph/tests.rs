@@ -446,3 +446,127 @@ fn ambiguous_extraction_is_deterministic_by_construction_order() {
         assert_eq!(sat_identity, run_sat(&mut g));
     }
 }
+
+mod filtration {
+    use super::*;
+    use crate::dag::graph::filtration::{FilterMode, filter};
+
+    #[test]
+    fn removes_self_referential_alternative() {
+        let mut g = Graph::default();
+        let class = g.add_vertex(false, 0, || None);
+        let store = g.add_vertex(true, 1, || None);
+        let leaf = g.add_vertex(true, 1, || None);
+        g.set_roots([class]);
+        g.add_edges(class, [store, leaf]);
+        g.add_edges(store, [class]);
+
+        let report = filter(&g, FilterMode::Validity);
+        assert!(report.disabled[store]);
+        assert!(!report.disabled[leaf]);
+        assert_eq!(report.removed_self, 1);
+    }
+
+    #[test]
+    fn keeps_consumers() {
+        let mut g = Graph::default();
+        let class = g.add_vertex(false, 0, || None);
+        let mem = g.add_vertex(false, 0, || None);
+        let store = g.add_vertex(true, 1, || None);
+        let pure = g.add_vertex(true, 1, || None);
+        g.set_roots([class]);
+        g.add_edges(class, [store, pure]);
+        g.add_edges(store, [mem]);
+        g.set_consumes(store, [mem]);
+
+        let report = filter(&g, FilterMode::Validity);
+        assert!(!report.disabled[store]);
+        assert_eq!(report.consumers, 1);
+    }
+
+    #[test]
+    fn subset_domination_respects_mode() {
+        let mut g = Graph::default();
+        let class = g.add_vertex(false, 0, || None);
+        let x = g.add_vertex(false, 0, || None);
+        let expensive_leaf = g.add_vertex(true, 5, || None);
+        let cheap_input = g.add_vertex(true, 1, || None);
+        g.set_roots([class]);
+        g.add_edges(class, [expensive_leaf, cheap_input]);
+        g.add_edges(cheap_input, [x]);
+
+        let validity = filter(&g, FilterMode::Validity);
+        assert!(validity.disabled[cheap_input]);
+        assert!(!validity.disabled[expensive_leaf]);
+
+        let optimal = filter(&g, FilterMode::Optimal);
+        assert!(!optimal.disabled[cheap_input]);
+        assert!(!optimal.disabled[expensive_leaf]);
+    }
+
+    #[test]
+    fn duplicate_inputs_keep_cheapest() {
+        let mut g = Graph::default();
+        let class = g.add_vertex(false, 0, || None);
+        let x = g.add_vertex(false, 0, || None);
+        let expensive = g.add_vertex(true, 3, || None);
+        let cheap = g.add_vertex(true, 1, || None);
+        g.set_roots([class]);
+        g.add_edges(class, [expensive, cheap]);
+        g.add_edges(expensive, [x]);
+        g.add_edges(cheap, [x]);
+
+        for mode in [FilterMode::Validity, FilterMode::Optimal] {
+            let report = filter(&g, mode);
+            assert!(!report.disabled[cheap], "{mode:?}");
+            assert!(report.disabled[expensive], "{mode:?}");
+            assert_eq!(report.removed_duplicate, 1, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn reduced_model_lifts_to_full_graph() {
+        let mut g = Graph::default();
+        let class = g.add_vertex(false, 0, || None);
+        let x = g.add_vertex(false, 0, || None);
+        let leaf = g.add_vertex(true, 5, || None);
+        let input = g.add_vertex(true, 1, || None);
+        g.set_roots([class]);
+        g.add_edges(class, [leaf, input]);
+        g.add_edges(input, [x]);
+
+        let report = filter(&g, FilterMode::Optimal);
+        g.set_disabled(report.disabled.clone());
+        let solution = solve_naive(&mut g).unwrap();
+
+        let mut lifted = solution.assignment.clone();
+        for (id, &disabled) in report.disabled.iter().enumerate() {
+            if disabled {
+                lifted[id] = false;
+            }
+        }
+        g.set_disabled(vec![]);
+        g.collect_usage();
+        assert!(g.validate(&lifted));
+    }
+
+    #[test]
+    fn optimal_filter_preserves_cost() {
+        let mut g = Graph::default();
+        let class = g.add_vertex(false, 0, || None);
+        let x = g.add_vertex(false, 0, || None);
+        let expensive_leaf = g.add_vertex(true, 5, || None);
+        let cheap_input = g.add_vertex(true, 1, || None);
+        g.set_roots([class]);
+        g.add_edges(class, [expensive_leaf, cheap_input]);
+        g.add_edges(cheap_input, [x]);
+
+        let report = filter(&g, FilterMode::Optimal);
+        g.set_disabled(report.disabled);
+        let filtered = solve_naive(&mut g).unwrap().cost;
+
+        g.set_disabled(vec![]);
+        let full = solve_naive(&mut g).unwrap().cost;
+        assert_eq!(filtered, full);
+    }
+}

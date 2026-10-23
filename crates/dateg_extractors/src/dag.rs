@@ -17,7 +17,10 @@ use crate::dag::graph::VertexId;
 pub use dateg_extractors_macro::index_dag;
 pub use error::ExtractError;
 pub(crate) use error::{check_deadline, remaining};
-pub use graph::{CycleBlocking, MaxSatIncSccConfig, SatIncSccConfig, SolverConfig};
+pub use graph::{
+    CombinatorConfig, CombinatorConfigBuilder, CycleBlocking, Fallback, FilterMode,
+    MaxSatIncSccConfig, SatIncSccConfig, SolverConfig,
+};
 pub(crate) use stats::StatsSink;
 pub use stats::{ExtractStats, StatValue};
 
@@ -93,12 +96,14 @@ pub struct ExtractOptions {
     solver: SolverConfig,
     timeout: Option<Duration>,
     validate: bool,
+    filtration: Option<FilterMode>,
 }
 
 pub struct ExtractOptionsBuilder {
     solver: SolverConfig,
     timeout: Option<Duration>,
     validate: bool,
+    filtration: Option<FilterMode>,
 }
 
 impl ExtractOptions {
@@ -113,6 +118,7 @@ impl ExtractOptions {
             solver,
             timeout: Some(Self::DEFAULT_TIMEOUT),
             validate: true,
+            filtration: None,
         }
     }
 }
@@ -130,11 +136,18 @@ impl ExtractOptionsBuilder {
         self
     }
 
+    /// Reduce the solver graph before extraction. `None` leaves it unchanged.
+    pub fn filtration(mut self, filtration: Option<FilterMode>) -> Self {
+        self.filtration = filtration;
+        self
+    }
+
     pub fn build(self) -> ExtractOptions {
         ExtractOptions {
             solver: self.solver,
             timeout: self.timeout,
             validate: self.validate,
+            filtration: self.filtration,
         }
     }
 }
@@ -223,6 +236,26 @@ impl<Index: Default> Extractor<Index> {
             .get(&root.into_egglog())
             .ok_or(ExtractError::RootMissing)?;
         self.dag.set_roots([root_vertex]);
+        if let Some(mode) = options.filtration {
+            let started = Instant::now();
+            let report = graph::filter(&self.dag, mode);
+            stats.duration("filtration.analyze", started.elapsed());
+            let disabled = report.disabled.iter().filter(|&&flag| flag).count() as u64;
+            stats.text(
+                "filtration.mode",
+                match mode {
+                    FilterMode::Validity => "validity",
+                    FilterMode::Optimal => "optimal",
+                },
+            );
+            stats.count("filtration.alternatives", report.alternatives);
+            stats.count("filtration.consumers", report.consumers);
+            stats.count("filtration.removed_self", report.removed_self);
+            stats.count("filtration.removed_duplicate", report.removed_duplicate);
+            stats.count("filtration.removed_dominated", report.removed_dominated);
+            stats.count("filtration.disabled", disabled);
+            self.dag.set_disabled(report.disabled);
+        }
 
         let solution = self.dag.solve_with(&options.solver, deadline, stats)?;
 
@@ -314,10 +347,12 @@ impl<Index: Default> Extractor<Index> {
                     .add_edges(cstr, non_primitive.iter().copied().map(|v| ext.values[&v]));
                 let value = ext.values[&output];
                 ext.alternatives.entry(value).or_default().push(cstr);
-                for consumed in custom_consumes(inputs)
+                let consumed: Vec<VertexId> = custom_consumes(inputs)
                     .into_iter()
                     .map(|value| ext.values[&value])
-                {
+                    .collect();
+                ext.dag.set_consumes(cstr, consumed.iter().copied());
+                for &consumed in &consumed {
                     ext.consumers.entry(consumed).or_default().insert(cstr);
                 }
             }

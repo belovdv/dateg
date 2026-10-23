@@ -208,6 +208,19 @@ impl<'a> SmtCore<'a> {
         Ok(())
     }
 
+    /// Solver errors after the deadline are timeouts; z3 reports a canceled
+    /// check as `(error "line ... canceled")` rather than `unknown`.
+    fn solver_error(&self, error: std::io::Error) -> ExtractError {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            ExtractError::Timeout
+        } else {
+            ExtractError::Other(error.into())
+        }
+    }
+
     pub(crate) fn check(&mut self, assumption: Option<SExpr>) -> Result<Check, ExtractError> {
         check_deadline(self.deadline)?;
         self.refresh_timeout()?;
@@ -216,7 +229,7 @@ impl<'a> SmtCore<'a> {
             Some(assumption) => self.ctx.check_assuming([assumption]),
             None => self.ctx.check(),
         }
-        .map_err(|error| ExtractError::Other(error.into()))?;
+        .map_err(|error| self.solver_error(error))?;
 
         match response {
             easy_smt::Response::Sat => {}
@@ -234,7 +247,7 @@ impl<'a> SmtCore<'a> {
         let values = self
             .ctx
             .get_value(self.vars.clone())
-            .map_err(|error| ExtractError::Other(error.into()))?;
+            .map_err(|error| self.solver_error(error))?;
         let used = values
             .into_iter()
             .enumerate()

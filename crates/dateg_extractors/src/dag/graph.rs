@@ -13,14 +13,20 @@ use petgraph::{
 
 use super::{ExtractError, StatsSink};
 
+mod combinator;
 mod common;
+mod domination;
+mod filtration;
 mod max_sat_inc_scc;
 mod naive;
 mod sat_inc_scc;
 #[cfg(test)]
 mod tests;
 
+pub use combinator::{CombinatorConfig, CombinatorConfigBuilder, Fallback};
 pub use common::CycleBlocking;
+pub use filtration::FilterMode;
+pub(crate) use filtration::filter;
 pub use max_sat_inc_scc::MaxSatIncSccConfig;
 pub use sat_inc_scc::SatIncSccConfig;
 
@@ -35,6 +41,8 @@ pub struct Graph {
     graph: DiGraph<Vertex, ()>,
     roots: Vec<VertexId>,
     used: Vec<bool>,
+    /// Vertices excluded from the solver. Empty means nothing is disabled.
+    disabled: Vec<bool>,
     conflict_groups: Vec<Vec<VertexId>>,
 }
 pub type VertexId = usize;
@@ -43,6 +51,8 @@ struct Vertex {
     is_all: bool,
     cost: usize,
     label: Option<String>,
+    /// Input classes consumed by this constructor, if any.
+    consumes: Vec<VertexId>,
 }
 
 /// Selects the extraction algorithm.
@@ -59,6 +69,9 @@ pub enum SolverConfig {
     /// that cost. When the deadline expires during improvement, the best
     /// acyclic model found so far is returned.
     SatIncScc(SatIncSccConfig),
+    /// Tries `first` with a small budget and falls back to `second` with the
+    /// remaining budget when the first fails in the configured way.
+    Combinator(CombinatorConfig),
 }
 
 #[derive(Debug)]
@@ -81,6 +94,7 @@ impl Graph {
             is_all,
             cost,
             label,
+            consumes: Vec::new(),
         };
         self.graph.add_node(v).index()
     }
@@ -90,6 +104,24 @@ impl Graph {
             self.graph
                 .update_edge(NodeIndex::new(from), NodeIndex::new(to), ());
         }
+    }
+
+    /// Record which input classes a constructor consumes.
+    pub(crate) fn set_consumes(
+        &mut self,
+        id: VertexId,
+        consumed: impl IntoIterator<Item = VertexId>,
+    ) {
+        self.graph[NodeIndex::new(id)].consumes = consumed.into_iter().collect();
+    }
+
+    /// Exclude vertices from the solver without changing vertex ids.
+    pub(crate) fn set_disabled(&mut self, disabled: Vec<bool>) {
+        debug_assert!(
+            disabled.is_empty() || disabled.len() == self.graph.node_count(),
+            "disabled mask must match the graph"
+        );
+        self.disabled = disabled;
     }
 
     /// Set roots in the given order. With multiple roots, this order is part
@@ -131,6 +163,7 @@ impl Graph {
                 SolverConfig::Naive => "naive",
                 SolverConfig::MaxSatIncScc(_) => "maxsat.inc_scc",
                 SolverConfig::SatIncScc(_) => "sat.inc_scc",
+                SolverConfig::Combinator(_) => "combinator",
             },
         );
 
@@ -146,6 +179,7 @@ impl Graph {
                 let mut solver = sat_inc_scc::SatIncSccExtractor::new(self, config, deadline)?;
                 solver.solve(deadline, stats)
             })(),
+            SolverConfig::Combinator(config) => self.solve_combinator(config, deadline, stats),
         };
 
         stats.solver(solve_started.elapsed());
@@ -159,14 +193,26 @@ impl Graph {
     }
 
     fn collect_usage(&mut self) {
+        let disabled = self.disabled.clone();
+        self.collect_usage_with(&disabled);
+    }
+
+    fn collect_usage_with(&mut self, disabled: &[bool]) {
+        let is_disabled = |id: VertexId| disabled.get(id).copied().unwrap_or(false);
         self.used = vec![false; self.graph.node_count()];
         let mut queue = self.roots.clone();
         while let Some(next) = queue.pop() {
-            if !self.used[next] {
-                self.used[next] = true;
-                let ni = NodeIndex::new(next);
-                queue.extend(self.graph.neighbors(ni).map(|idx| idx.index()));
+            if is_disabled(next) || self.used[next] {
+                continue;
             }
+            self.used[next] = true;
+            let ni = NodeIndex::new(next);
+            queue.extend(
+                self.graph
+                    .neighbors(ni)
+                    .map(|idx| idx.index())
+                    .filter(|&id| !is_disabled(id)),
+            );
         }
     }
 
@@ -262,6 +308,33 @@ impl Graph {
         stats.count("graph.scc_nodes", scc_nodes);
         stats.count("graph.scc_max", scc_max);
         stats.count("graph.scc_sum_squares", scc_sum_squares);
+
+        // Cyclomatic number per SCC: independent cycles in the used graph.
+        let mut component_of = vec![usize::MAX; self.graph.node_count()];
+        for (component, scc) in sccs.iter().enumerate() {
+            for &node in scc {
+                component_of[node] = component;
+            }
+        }
+        let mut cycle_rank = 0u64;
+        let mut cycle_rank_max = 0u64;
+        for (component, scc) in sccs.iter().enumerate() {
+            let internal: u64 = scc
+                .iter()
+                .map(|&node| {
+                    self.graph
+                        .neighbors(NodeIndex::new(node))
+                        .filter(|next| component_of[next.index()] == component)
+                        .count() as u64
+                })
+                .sum();
+            let rank = internal.saturating_sub(scc.len() as u64 - 1);
+            cycle_rank += rank;
+            cycle_rank_max = cycle_rank_max.max(rank);
+        }
+        stats.count("graph.cycle_rank", cycle_rank);
+        stats.count("graph.cycle_rank_max", cycle_rank_max);
+
         stats.count("graph.cycles_4", self.detect_cycles_4().len() as u64);
     }
 }

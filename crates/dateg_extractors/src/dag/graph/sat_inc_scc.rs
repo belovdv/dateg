@@ -131,6 +131,7 @@ impl<'a> SatIncSccExtractor<'a> {
 
         let mut initial_steps = 0u64;
         let mut initial_blocked_sets = 0u64;
+        let initial_started = Instant::now();
         let (mut best_cost, mut best) = loop {
             check_deadline(deadline)?;
             initial_steps += 1;
@@ -149,6 +150,7 @@ impl<'a> SatIncSccExtractor<'a> {
         };
         stats.count("sat.inc_scc.initial_blocked_sccs", initial_blocked_sets);
         stats.count("sat.inc_scc.initial_cost", best_cost as u64);
+        stats.duration("sat.inc_scc.initial", initial_started.elapsed());
 
         let mut lower = None;
         let mut probes = 0u64;

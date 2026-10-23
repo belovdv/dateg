@@ -307,10 +307,23 @@ fn build_with(
 
     run_saturation(&mut m);
 
-    // Final action is always a store over the current (last) memory.
-    let addr = pick_addr(&mut rng, params.weights, &ints, &addrs);
-    let value = pick_int(&mut rng, params.weights, &ints);
-    let root = m.add_store(mem, addr, value).canon(&m.eg);
+    // Saturation can rewrite the body's last memory and the operand tokens
+    // picked from it, so canonicalize them before the final store. Without
+    // this the store row has a stale input that is absent from the extractor's
+    // value table, and the root ends up with no constructor.
+    let mem = mem.canon(&m.eg);
+    // Storing back the value just loaded from the same address is a no-op
+    // under `read_after_write`; such a program has no root constructor and is
+    // unextractable. Fall back to a fresh constant, which cannot be congruent
+    // to any loaded value, so every generated program has a real root.
+    let addr = pick_addr(&mut rng, params.weights, &ints, &addrs).canon(&m.eg);
+    let value = pick_int(&mut rng, params.weights, &ints).canon(&m.eg);
+    let mut root_token = m.add_store(mem, addr, value);
+    if root_token.canon(&m.eg) == mem {
+        let fresh = m.add_cst(1_000_000 + params.seed as usize);
+        root_token = m.add_store(mem, addr, fresh);
+    }
+    let root = root_token.canon(&m.eg);
     let size = m.term_count();
     (m, root, size)
 }
