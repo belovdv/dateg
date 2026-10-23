@@ -106,6 +106,7 @@ fn main() {
             }
         }
         SolverConfig::Naive => {}
+        SolverConfig::BestEffort(_) => {}
         SolverConfig::Combinator(config) => {
             if let Ok(value) = std::env::var("PROBE_FIRST_BUDGET_MS") {
                 config.first_budget = Some(Duration::from_millis(

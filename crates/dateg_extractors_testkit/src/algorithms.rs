@@ -1,7 +1,8 @@
 use std::{sync::LazyLock, time::Duration};
 
 use dateg_extractors::dag::{
-    CombinatorConfig, ExtractOptions, FilterMode, SatIncSccConfig, SolverConfig,
+    BestEffortConfig, CombinatorConfig, ExtractOptions, FilterMode, FirstResult, SatIncSccConfig,
+    SolverConfig,
 };
 
 use crate::case::{Complexity, Tier};
@@ -121,6 +122,31 @@ pub static ALGORITHMS: LazyLock<Vec<Algorithm>> = LazyLock::new(|| {
             bench_only: true,
         },
         Algorithm {
+            name: "chain",
+            config: SolverConfig::BestEffort(BestEffortConfig::default()),
+            timeout,
+            filtration: None,
+            capacity: sat_capacity,
+            oracles: &[],
+            bench_only: true,
+        },
+        Algorithm {
+            name: "combinator.chain",
+            config: SolverConfig::Combinator(
+                CombinatorConfig::builder(SolverConfig::BestEffort(BestEffortConfig::default()))
+                    .first_share(0.05)
+                    .first_budget(Duration::from_secs(2))
+                    .second(SolverConfig::MaxSatIncScc(Default::default()))
+                    .first_result(FirstResult::Fallback)
+                    .build(),
+            ),
+            timeout,
+            filtration: Some(FilterMode::Validity),
+            capacity: sat_capacity,
+            oracles: &[],
+            bench_only: true,
+        },
+        Algorithm {
             name: "combinator",
             config: SolverConfig::Combinator(CombinatorConfig::default()),
             timeout,
@@ -205,7 +231,8 @@ mod tests {
         assert_eq!(matching("maxsat.inc_scc").len(), 1);
         assert_eq!(matching("sat.*").len(), 2);
         assert!(matching("sat.*").iter().all(|a| a.name.starts_with("sat.")));
-        assert_eq!(matching("combinator*").len(), 2);
+        assert_eq!(matching("combinator*").len(), 3);
+        assert_eq!(matching("chain").len(), 1);
         assert!(matching("no.such.algorithm").is_empty());
     }
 }

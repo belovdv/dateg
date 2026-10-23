@@ -13,6 +13,7 @@ use petgraph::{
 
 use super::{ExtractError, StatsSink};
 
+mod best_effort;
 mod combinator;
 mod common;
 mod domination;
@@ -23,7 +24,8 @@ mod sat_inc_scc;
 #[cfg(test)]
 mod tests;
 
-pub use combinator::{CombinatorConfig, CombinatorConfigBuilder, Fallback};
+pub use best_effort::{BestEffortAlgorithm, BestEffortConfig};
+pub use combinator::{CombinatorConfig, CombinatorConfigBuilder, Fallback, FirstResult};
 pub use common::CycleBlocking;
 pub use filtration::FilterMode;
 pub(crate) use filtration::filter;
@@ -60,6 +62,11 @@ struct Vertex {
 pub enum SolverConfig {
     /// Exhaustive search. Only suitable for small graphs; intended as a test oracle.
     Naive,
+    /// Best-effort validity: cost-blind heuristics selected by
+    /// [`BestEffortConfig`]. The chain walk returns `Unsolved` when its shape
+    /// check fails or the rollback budget is exhausted. Not a decision
+    /// procedure; intended as a cheap first stage or fallback.
+    BestEffort(BestEffortConfig),
     /// Incremental MaxSAT. After each model, block every SCC in the selected
     /// subgraph and re-solve until the selected subgraph is acyclic.
     MaxSatIncScc(MaxSatIncSccConfig),
@@ -161,6 +168,9 @@ impl Graph {
             "solver.name",
             match config {
                 SolverConfig::Naive => "naive",
+                SolverConfig::BestEffort(config) => match config.algorithm {
+                    BestEffortAlgorithm::Chain => "chain",
+                },
                 SolverConfig::MaxSatIncScc(_) => "maxsat.inc_scc",
                 SolverConfig::SatIncScc(_) => "sat.inc_scc",
                 SolverConfig::Combinator(_) => "combinator",
@@ -170,13 +180,15 @@ impl Graph {
         let solve_started = Instant::now();
         let assignment = match config {
             SolverConfig::Naive => naive::solve(self, deadline).map(|(_, assignment)| assignment),
+            SolverConfig::BestEffort(config) => best_effort::solve(self, config, deadline, stats),
             SolverConfig::MaxSatIncScc(config) => (|| {
                 let mut solver =
                     max_sat_inc_scc::MaxSatIncSccExtractor::new(self, config, deadline)?;
                 solver.solve(deadline, stats)
             })(),
             SolverConfig::SatIncScc(config) => (|| {
-                let mut solver = sat_inc_scc::SatIncSccExtractor::new(self, config, deadline)?;
+                let mut solver =
+                    sat_inc_scc::SatIncSccExtractor::new(self, config, deadline, None)?;
                 solver.solve(deadline, stats)
             })(),
             SolverConfig::Combinator(config) => self.solve_combinator(config, deadline, stats),

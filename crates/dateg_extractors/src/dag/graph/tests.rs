@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use petgraph::dot::{Config, Dot};
 use rand::{
@@ -18,6 +18,10 @@ fn maxsat() -> SolverConfig {
 
 fn sat() -> SolverConfig {
     SolverConfig::SatIncScc(Default::default())
+}
+
+fn best_effort() -> SolverConfig {
+    SolverConfig::BestEffort(BestEffortConfig::default())
 }
 
 fn maxsat_scc() -> SolverConfig {
@@ -269,6 +273,27 @@ fn acyclic_subgraph_extraction() {
 
         let sat_scc = solve_sat_with(&mut g, &sat_scc());
         assert_eq!(naive.cost, sat_scc.cost, "test {i}: naive vs sat_scc");
+
+        // The best-effort search commits a choice once its own requirements are
+        // met, so it is a fast heuristic rather than a decision procedure: a
+        // returned assignment must be valid and no better than the optimum, and
+        // a rare `Unsolved` is tolerated (the rate is asserted below).
+        match g.solve_with(&best_effort(), None, &mut StatsSink(None)) {
+            Ok(best_effort) => {
+                assert!(
+                    g.check_constraints(&best_effort.assignment),
+                    "test {i}: best-effort invalid"
+                );
+                assert!(
+                    best_effort.cost >= naive.cost,
+                    "test {i}: best-effort cost {} below optimum {}",
+                    best_effort.cost,
+                    naive.cost
+                );
+            }
+            Err(ExtractError::Unsolved) => {}
+            Err(error) => error.panic_with_graph(&g, &assignment),
+        }
     });
     let failed = count_fail_to_build.load(SeqCst);
     assert!(num - failed > 100, "only {} succeeded", num - failed);
@@ -331,6 +356,298 @@ fn sat_zero_cost() {
     assert_eq!(solved.cost, 0);
     assert_eq!(stats.custom["sat.inc_scc.probes"], StatValue::Count(0));
     assert_eq!(stats.custom["sat.inc_scc.optimal"], StatValue::Count(1));
+}
+
+/// A stateful chain: `init -> store1 -> store2`, with pure constants. The
+/// chain solver must walk from the base to the root and materialize the cone.
+#[test]
+fn chain_walks_from_the_base_to_the_root() {
+    let mut g = Graph::default();
+    let m0 = g.add_vertex(false, 0, || None);
+    let m1 = g.add_vertex(false, 0, || None);
+    let m2 = g.add_vertex(false, 0, || None);
+    let init = g.add_vertex(true, 1, || None);
+    let store1 = g.add_vertex(true, 1, || None);
+    let store2 = g.add_vertex(true, 1, || None);
+    let c0 = g.add_vertex(false, 0, || None);
+    let cst0 = g.add_vertex(true, 1, || None);
+    let c1 = g.add_vertex(false, 0, || None);
+    let cst1 = g.add_vertex(true, 1, || None);
+    g.set_roots([m2]);
+    g.add_edges(m0, [init]);
+    g.add_edges(m1, [store1]);
+    g.add_edges(m2, [store2]);
+    g.add_edges(c0, [cst0]);
+    g.add_edges(c1, [cst1]);
+    g.add_edges(store1, [m0, c0]);
+    g.add_edges(store2, [m1, c1]);
+    g.set_consumes(store1, [m0]);
+    g.set_consumes(store2, [m1]);
+
+    let mut stats = ExtractStats::default();
+    let solution = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(&best_effort(), None, &mut sink).unwrap()
+    };
+    assert!(g.check_constraints(&solution.assignment));
+    assert_eq!(stats.custom["solver.name"], StatValue::Text("chain".into()));
+    assert_eq!(stats.custom["chain.shape"], StatValue::Text("ok".into()));
+    assert_eq!(stats.custom["chain.length"], StatValue::Count(2));
+    assert_eq!(solution.cost, 5);
+
+    // Deterministic.
+    let again = solve_sat_with(&mut g, &best_effort());
+    assert_eq!(solution.assignment, again.assignment);
+}
+
+/// A read of a class that is not derivable from the prefix makes the candidate
+/// invalid; the solver must roll back and take the next consumer.
+#[test]
+fn chain_rolls_back_when_a_read_is_not_derivable() {
+    let mut g = Graph::default();
+    let m0 = g.add_vertex(false, 0, || None);
+    let m1 = g.add_vertex(false, 0, || None);
+    let m2 = g.add_vertex(false, 0, || None);
+    let init = g.add_vertex(true, 1, || None);
+    let good = g.add_vertex(true, 1, || None);
+    let bad = g.add_vertex(true, 0, || None);
+    let store2 = g.add_vertex(true, 1, || None);
+    let c = g.add_vertex(false, 0, || None);
+    let cst = g.add_vertex(true, 1, || None);
+    g.set_roots([m2]);
+    g.add_edges(m0, [init]);
+    g.add_edges(m1, [bad, good]);
+    g.add_edges(m2, [store2]);
+    g.add_edges(c, [cst]);
+    // `bad` reads the root, which cannot be produced before it; it is cheaper,
+    // so the greedy order tries it first.
+    g.add_edges(bad, [m0, m2]);
+    g.add_edges(good, [m0, c]);
+    g.add_edges(store2, [m1, c]);
+    g.set_consumes(bad, [m0]);
+    g.set_consumes(good, [m0]);
+    g.set_consumes(store2, [m1]);
+
+    let mut stats = ExtractStats::default();
+    let solution = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(&best_effort(), None, &mut sink).unwrap()
+    };
+    assert!(g.check_constraints(&solution.assignment));
+    assert!(!solution.assignment[bad]);
+    assert!(solution.assignment[good]);
+    assert!(matches!(
+        stats.custom["chain.rollbacks"],
+        StatValue::Count(rollbacks) if rollbacks > 0
+    ));
+}
+
+/// Constructors with two consumable inputs do not have the chain shape; the
+/// probe declines instead of guessing.
+#[test]
+fn chain_reports_unsolved_on_a_non_chain_shape() {
+    let mut g = Graph::default();
+    let a = g.add_vertex(false, 0, || None);
+    let b = g.add_vertex(false, 0, || None);
+    let root = g.add_vertex(false, 0, || None);
+    let init_a = g.add_vertex(true, 1, || None);
+    let init_b = g.add_vertex(true, 1, || None);
+    let both = g.add_vertex(true, 1, || None);
+    g.set_roots([root]);
+    g.add_edges(a, [init_a]);
+    g.add_edges(b, [init_b]);
+    g.add_edges(root, [both]);
+    g.add_edges(both, [a, b]);
+    g.set_consumes(both, [a, b]);
+
+    let mut stats = ExtractStats::default();
+    let failure = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(&best_effort(), None, &mut sink).unwrap_err()
+    };
+    assert!(matches!(failure, ExtractError::Unsolved));
+    assert_eq!(
+        stats.custom["chain.shape"],
+        StatValue::Text("unsupported".into())
+    );
+}
+
+/// A cycle alternative (`x_loop`) next to a direct one (`x_direct`). The ids
+/// make the cycle the first choice, so a backtracking search must move past it;
+/// the pure closure can simply pick the direct alternative.
+fn graph_with_a_cycle_alternative() -> Graph {
+    let mut g = Graph::default();
+    let root = g.add_vertex(false, 0, || None);
+    let via_x = g.add_vertex(true, 1, || None);
+    let x = g.add_vertex(false, 0, || None);
+    let x_loop = g.add_vertex(true, 5, || None);
+    let x_direct = g.add_vertex(true, 1, || None);
+    let z = g.add_vertex(false, 0, || None);
+    let z_ctor = g.add_vertex(true, 1, || None);
+    g.set_roots([root]);
+    g.add_edges(root, [via_x]);
+    g.add_edges(via_x, [x]);
+    g.add_edges(x, [x_loop, x_direct]);
+    g.add_edges(x_loop, [root]);
+    g.add_edges(x_direct, [z]);
+    g.add_edges(z, [z_ctor]);
+    g
+}
+
+/// The best-effort entry point has no consumers here, so its pure closure
+/// chooses around the cyclic alternative; the result must be deterministic.
+#[test]
+fn best_effort_avoids_a_cycle() {
+    let mut g = graph_with_a_cycle_alternative();
+    let mut stats = ExtractStats::default();
+    let first = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(&best_effort(), None, &mut sink).unwrap()
+    };
+    assert!(g.check_constraints(&first.assignment));
+    assert_eq!(
+        first.assignment,
+        vec![true, true, true, false, true, true, true]
+    );
+    assert_eq!(first.cost, 3);
+    assert_eq!(stats.custom["solver.name"], StatValue::Text("chain".into()));
+
+    let second = solve_sat_with(&mut g, &best_effort());
+    assert_eq!(first.assignment, second.assignment);
+}
+
+/// When the exact first stage fails, the combinator takes a best-effort
+/// baseline before the imprecise second stage and keeps the cheapest result.
+#[test]
+fn combinator_uses_a_best_effort_baseline() {
+    let mut g = Graph::default();
+    let root = g.add_vertex(false, 0, || None);
+    let expensive = g.add_vertex(true, 5, || None);
+    let cheap = g.add_vertex(true, 1, || None);
+    g.set_roots([root]);
+    g.add_edges(root, [expensive, cheap]);
+
+    let config = SolverConfig::Combinator(
+        CombinatorConfig::builder(SolverConfig::Naive)
+            .first_budget(Duration::ZERO)
+            .second_budget(Duration::ZERO)
+            .build(),
+    );
+    let mut stats = ExtractStats::default();
+    let solution = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(&config, None, &mut sink).unwrap()
+    };
+    assert!(g.check_constraints(&solution.assignment));
+    assert_eq!(solution.cost, 5);
+    assert_eq!(
+        stats.custom["combinator.stage"],
+        StatValue::Text("baseline".into())
+    );
+    assert!(stats.custom.contains_key("combinator.baseline"));
+}
+
+/// The descending SAT stage starts from the known baseline instead of an
+/// unconstrained first model, and improves on it when possible.
+#[test]
+fn combinator_seeds_sat_with_the_baseline() {
+    let mut g = Graph::default();
+    let root = g.add_vertex(false, 0, || None);
+    let expensive = g.add_vertex(true, 5, || None);
+    let cheap = g.add_vertex(true, 1, || None);
+    g.set_roots([root]);
+    g.add_edges(root, [expensive, cheap]);
+
+    let config = SolverConfig::Combinator(
+        CombinatorConfig::builder(SolverConfig::Naive)
+            .first_budget(Duration::ZERO)
+            .build(),
+    );
+    let mut stats = ExtractStats::default();
+    let solution = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(&config, None, &mut sink).unwrap()
+    };
+    assert!(g.check_constraints(&solution.assignment));
+    assert_eq!(solution.cost, 1);
+    assert_eq!(stats.custom["sat.inc_scc.seeded"], StatValue::Count(1));
+    assert_eq!(stats.custom["sat.inc_scc.seed_cost"], StatValue::Count(5));
+    assert_eq!(
+        stats.custom["combinator.stage"],
+        StatValue::Text("second".into())
+    );
+}
+
+/// A class whose only alternative loops back to the root has no acyclic
+/// production; the heuristic reports `Unsolved` after exhausting its search.
+#[test]
+fn best_effort_reports_unsolved() {
+    let mut g = Graph::default();
+    let root = g.add_vertex(false, 0, || None);
+    let x = g.add_vertex(false, 0, || None);
+    let x_loop = g.add_vertex(true, 1, || None);
+    g.set_roots([root]);
+    g.add_edges(root, [x]);
+    g.add_edges(x, [x_loop]);
+    g.add_edges(x_loop, [root]);
+
+    let failure = g
+        .solve_with(&best_effort(), None, &mut StatsSink(None))
+        .unwrap_err();
+    assert!(matches!(failure, ExtractError::Unsolved));
+}
+
+/// `FirstResult::Final` keeps the imprecise first stage's answer;
+/// `FirstResult::Fallback` always runs the optimizer and keeps the first
+/// stage's assignment only when the second stage fails.
+#[test]
+fn combinator_chain_seed_and_fallback() {
+    let mut g = Graph::default();
+    let root = g.add_vertex(false, 0, || None);
+    let expensive = g.add_vertex(true, 5, || None);
+    let cheap = g.add_vertex(true, 1, || None);
+    g.set_roots([root]);
+    g.add_edges(root, [expensive, cheap]);
+
+    let final_config = SolverConfig::Combinator(CombinatorConfig::builder(best_effort()).build());
+    assert_eq!(solve_sat_with(&mut g, &final_config).cost, 5);
+
+    let fallback_config = SolverConfig::Combinator(
+        CombinatorConfig::builder(best_effort())
+            .first_result(FirstResult::Fallback)
+            .build(),
+    );
+    let mut stats = ExtractStats::default();
+    let optimized = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(&fallback_config, None, &mut sink).unwrap()
+    };
+    assert_eq!(optimized.cost, 1);
+    assert_eq!(
+        stats.custom["combinator.stage"],
+        StatValue::Text("second".into())
+    );
+
+    // A failing second stage must return the first stage's assignment instead
+    // of losing the only solution.
+    let timeout_config = SolverConfig::Combinator(
+        CombinatorConfig::builder(best_effort())
+            .second(SolverConfig::Naive)
+            .second_budget(Duration::ZERO)
+            .first_result(FirstResult::Fallback)
+            .build(),
+    );
+    let mut stats = ExtractStats::default();
+    let fallback = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(&timeout_config, None, &mut sink).unwrap()
+    };
+    assert_eq!(fallback.cost, 5);
+    assert!(g.check_constraints(&fallback.assignment));
+    assert_eq!(
+        stats.custom["combinator.stage"],
+        StatValue::Text("first-fallback".into())
+    );
 }
 
 /// The same abstract graph has multiple optimal assignments when built in

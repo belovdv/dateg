@@ -5,7 +5,9 @@ pub enum ExtractError {
     RootNotCanonical,
     /// The root is not present in the selected constructor tables.
     RootMissing,
-    /// The solver found no valid acyclic assignment (not a proof that none exists).
+    /// The solver found no valid acyclic assignment. For `Naive` this is a
+    /// proof that none exists; for the heuristic and imprecise solvers it is
+    /// not.
     Unsolved,
     /// The configured wall-clock budget was exhausted.
     Timeout,

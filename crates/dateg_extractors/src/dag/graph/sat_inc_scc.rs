@@ -10,11 +10,12 @@ const DEFAULT_DESCENT_FRACTION: f64 = 1.0 / 64.0;
 
 /// Plain SAT plus a cost-bound assertion, refined by repeated probes.
 ///
-/// The first model has no cost bound, so it only has to be acyclic. Its cost is
-/// an upper bound for the search; probes between `0` and that bound tighten it.
-/// Each probe activates a fresh assumption literal, so earlier assertions and
-/// learned clauses remain available. If the deadline expires during
-/// improvement, the best acyclic model found so far is kept.
+/// The first model has no cost bound, so it only has to be acyclic. Its cost,
+/// or an optionally supplied validated assignment, is the initial upper bound;
+/// probes between `0` and that bound tighten it. Each probe activates a fresh
+/// assumption literal, so earlier assertions and learned clauses remain
+/// available. If the deadline expires, the best acyclic model found so far (or
+/// the supplied seed) is kept.
 pub(super) struct SatIncSccExtractor<'a> {
     core: SmtCore<'a>,
     total_cost: SExpr,
@@ -23,6 +24,8 @@ pub(super) struct SatIncSccExtractor<'a> {
     descent_fraction: f64,
     probe_checks: u64,
     probe_blocked_sets: u64,
+    /// Validated known solution used as the initial upper bound.
+    initial: Option<(usize, Vec<bool>)>,
 }
 
 enum Probe {
@@ -56,7 +59,11 @@ impl<'a> SatIncSccExtractor<'a> {
         g: &'a Graph,
         config: &SatIncSccConfig,
         deadline: Option<Instant>,
+        initial: Option<Vec<bool>>,
     ) -> Result<Self, ExtractError> {
+        let initial = initial
+            .filter(|assignment| g.check_constraints(assignment))
+            .map(|assignment| (g.assignment_cost(&assignment), assignment));
         let mut core = SmtCore::new(g, deadline)?;
         core.assert_root_closure();
         core.assert_conflict_groups();
@@ -69,6 +76,7 @@ impl<'a> SatIncSccExtractor<'a> {
             descent_fraction: config.descent_fraction,
             probe_checks: 0,
             probe_blocked_sets: 0,
+            initial,
         })
     }
 
@@ -132,21 +140,46 @@ impl<'a> SatIncSccExtractor<'a> {
         let mut initial_steps = 0u64;
         let mut initial_blocked_sets = 0u64;
         let initial_started = Instant::now();
-        let (mut best_cost, mut best) = loop {
-            check_deadline(deadline)?;
+        let seed = self.initial.take();
+        let seeded = seed.is_some();
+        stats.count("sat.inc_scc.seeded", u64::from(seeded));
+        if let Some((cost, _)) = &seed {
+            stats.count("sat.inc_scc.seed_cost", *cost as u64);
+        }
+        let first = 'first: loop {
+            if check_deadline(deadline).is_err() {
+                break 'first Err(ExtractError::Timeout);
+            }
             initial_steps += 1;
             stats.count("sat.inc_scc.initial_steps", initial_steps);
-            match self.core.check(None)? {
-                Check::Unsat => return Err(ExtractError::Unsolved),
-                Check::Sat(selected) => {
+            match self.core.check(None) {
+                Ok(Check::Unsat) => break 'first Err(ExtractError::Unsolved),
+                Ok(Check::Sat(selected)) => {
                     let blocked = self.core.block_cycles(&selected, self.cycle_blocking);
                     if blocked.is_empty() {
                         let cost = self.core.g.assignment_cost(&selected);
-                        break (cost, selected);
+                        break 'first Ok((cost, selected));
                     }
                     initial_blocked_sets += blocked.len() as u64;
                 }
+                Err(ExtractError::Timeout) => break 'first Err(ExtractError::Timeout),
+                Err(error) => break 'first Err(error),
             }
+        };
+        let mut timed_out = false;
+        let (mut best_cost, mut best) = match first {
+            Ok(first) => match seed {
+                Some(seed) if seed.0 <= first.0 => seed,
+                _ => first,
+            },
+            Err(error @ (ExtractError::Timeout | ExtractError::Unsolved)) => match seed {
+                Some(seed) => {
+                    timed_out = true;
+                    seed
+                }
+                None => return Err(error),
+            },
+            Err(error) => return Err(error),
         };
         stats.count("sat.inc_scc.initial_blocked_sccs", initial_blocked_sets);
         stats.count("sat.inc_scc.initial_cost", best_cost as u64);
@@ -154,8 +187,7 @@ impl<'a> SatIncSccExtractor<'a> {
 
         let mut lower = None;
         let mut probes = 0u64;
-        let mut timed_out = false;
-        while let Some(bound) = self.next_bound(lower, best_cost) {
+        while !timed_out && let Some(bound) = self.next_bound(lower, best_cost) {
             if check_deadline(deadline).is_err() {
                 timed_out = true;
                 break;
