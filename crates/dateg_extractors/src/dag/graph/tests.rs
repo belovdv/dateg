@@ -525,6 +525,31 @@ mod filtration {
     }
 
     #[test]
+    fn naive_ignores_disabled_alternatives() {
+        let mut g = Graph::default();
+        let class = g.add_vertex(false, 0, || None);
+        let x = g.add_vertex(false, 0, || None);
+        let leaf = g.add_vertex(true, 1, || None);
+        let expression = g.add_vertex(true, 5, || None);
+        g.set_roots([class]);
+        g.add_edges(class, [leaf, expression]);
+        g.add_edges(expression, [x]);
+
+        let report = filter(&g, FilterMode::Validity);
+        assert!(report.disabled[expression]);
+        g.set_disabled(report.disabled.clone());
+
+        // Without masking by `used`, the solver can satisfy `class` with the
+        // disabled expression and report cost 0 instead of selecting the leaf.
+        let solution = solve_naive(&mut g).unwrap();
+        assert!(
+            !solution.assignment[expression],
+            "disabled alternative must stay unselected"
+        );
+        assert_eq!(solution.cost, 1);
+    }
+
+    #[test]
     fn reduced_model_lifts_to_full_graph() {
         let mut g = Graph::default();
         let class = g.add_vertex(false, 0, || None);

@@ -18,7 +18,10 @@ pub fn solve(g: &Graph, deadline: Option<Instant>) -> Result<(usize, Vec<bool>),
             check_deadline(deadline)?;
         }
 
-        let assignment: Vec<bool> = (0..n).map(|i| (mask >> i) & 1 != 0).collect();
+        // Only root-reachable, enabled vertices are solver variables. Leaving
+        // the other bits free would let a mask "select" a disabled vertex and
+        // then leak it into the collected index.
+        let assignment: Vec<bool> = (0..n).map(|i| g.used[i] && (mask >> i) & 1 != 0).collect();
         if !g.check_constraints(&assignment) {
             continue;
         }
