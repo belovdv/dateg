@@ -17,7 +17,7 @@ use crate::dag::graph::VertexId;
 pub use dateg_extractors_macro::index_dag;
 pub use error::ExtractError;
 pub(crate) use error::{check_deadline, remaining};
-pub use graph::{MaxSatIncSccBlockingConfig, SolverConfig};
+pub use graph::{CycleBlocking, MaxSatIncSccConfig, SatIncSccConfig, SolverConfig};
 pub(crate) use stats::StatsSink;
 pub use stats::{ExtractStats, StatValue};
 

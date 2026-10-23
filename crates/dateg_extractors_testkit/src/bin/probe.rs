@@ -9,6 +9,9 @@
 //! - `PROBE_RULES` (`none` | `assoc` | `reorder` | `assoc_reorder`, default `reorder`)
 //! - `PROBE_ADDRESSES` number of constant addresses (default 8)
 //! - `PROBE_TIMEOUT` extraction seconds (default 10)
+//! - `PROBE_ALGORITHM` solver name (default `maxsat.inc_scc`)
+//! - `PROBE_CYCLE_BLOCKING` (`scc` | `shortest`) for either solver
+//! - `PROBE_PREEMPTIVE` (`1` | `0`) for preemptive 4-cycle blocking
 //! - `PROBE_METRICS_ONLY` when set, stop right after graph construction
 //!
 //! Output is a single `key=value` line prefixed with `RESULT `.
@@ -18,7 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use dateg_extractors::dag::{ExtractError, ExtractStats, StatValue};
+use dateg_extractors::dag::{CycleBlocking, ExtractError, ExtractStats, SolverConfig, StatValue};
 use dateg_extractors_testkit::algorithms;
 use dateg_extractors_testkit::indexes::mem::extract_mem_with_stats;
 use dateg_extractors_testkit::sources::generated::{self, Params};
@@ -72,14 +75,35 @@ fn main() {
     };
     fields.push(format!("size={size}"));
 
-    let mut algorithm = algorithms::by_name("maxsat.inc_scc")
-        .expect("maxsat algorithm")
-        .clone();
+    let mut algorithm = algorithms::by_name(
+        &std::env::var("PROBE_ALGORITHM").unwrap_or_else(|_| "maxsat.inc_scc".into()),
+    )
+    .expect("algorithm")
+    .clone();
     algorithm.timeout = if metrics_only {
         Duration::ZERO
     } else {
         Duration::from_secs(timeout_secs)
     };
+    match &mut algorithm.config {
+        SolverConfig::SatIncScc(config) => {
+            if let Ok(value) = std::env::var("PROBE_PREEMPTIVE") {
+                config.preemptive_4cycles = parse_bool(&value);
+            }
+            if let Ok(value) = std::env::var("PROBE_CYCLE_BLOCKING") {
+                config.cycle_blocking = parse_cycle_blocking(&value);
+            }
+        }
+        SolverConfig::MaxSatIncScc(config) => {
+            if let Ok(value) = std::env::var("PROBE_PREEMPTIVE") {
+                config.preemptive_4cycles = parse_bool(&value);
+            }
+            if let Ok(value) = std::env::var("PROBE_CYCLE_BLOCKING") {
+                config.cycle_blocking = parse_cycle_blocking(&value);
+            }
+        }
+        SolverConfig::Naive => {}
+    }
 
     let mut stats = ExtractStats::default();
     let started = Instant::now();
@@ -123,4 +147,20 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
+}
+
+fn parse_bool(value: &str) -> bool {
+    match value {
+        "1" | "true" => true,
+        "0" | "false" => false,
+        other => panic!("expected boolean, got {other:?}"),
+    }
+}
+
+fn parse_cycle_blocking(value: &str) -> CycleBlocking {
+    match value {
+        "scc" => CycleBlocking::Scc,
+        "shortest" => CycleBlocking::Shortest,
+        other => panic!("unknown PROBE_CYCLE_BLOCKING {other:?}"),
+    }
 }

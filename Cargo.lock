@@ -248,7 +248,6 @@ dependencies = [
  "anyhow",
  "dateg",
  "dateg_extractors_macro",
- "du_utils_timed",
  "easy-smt",
  "log",
  "paste",
@@ -283,14 +282,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "du_utils_timed"
-version = "0.1.0"
-source = "git+https://github.com/belovdv/du_utils.git?rev=6adc494d430bfebe6debccf4dca9c38a69cbb1e6#6adc494d430bfebe6debccf4dca9c38a69cbb1e6"
-dependencies = [
- "log",
 ]
 
 [[package]]

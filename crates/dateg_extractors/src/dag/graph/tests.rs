@@ -13,11 +13,61 @@ use crate::dag::{ExtractError, ExtractStats, StatValue, StatsSink};
 use super::*;
 
 fn maxsat() -> SolverConfig {
-    SolverConfig::MaxSatIncSccBlocking(Default::default())
+    SolverConfig::MaxSatIncScc(Default::default())
+}
+
+fn sat() -> SolverConfig {
+    SolverConfig::SatIncScc(Default::default())
+}
+
+fn maxsat_scc() -> SolverConfig {
+    SolverConfig::MaxSatIncScc(MaxSatIncSccConfig {
+        cycle_blocking: CycleBlocking::Scc,
+        ..Default::default()
+    })
+}
+
+fn sat_scc() -> SolverConfig {
+    SolverConfig::SatIncScc(SatIncSccConfig {
+        cycle_blocking: CycleBlocking::Scc,
+        ..Default::default()
+    })
 }
 
 fn solve(g: &mut Graph) -> Solution {
     g.solve_with(&maxsat(), None, &mut StatsSink(None)).unwrap()
+}
+
+fn solve_sat_with(g: &mut Graph, config: &SolverConfig) -> Solution {
+    g.solve_with(config, None, &mut StatsSink(None)).unwrap()
+}
+
+fn solve_sat(g: &mut Graph) -> Solution {
+    solve_sat_with(g, &sat())
+}
+
+/// Cost of the selected subgraph reachable from the roots. The `Sat` solver
+/// must match this, not just `assignment_cost`: a model may otherwise select
+/// extra disconnected nodes and over-report its cost.
+fn selected_reachable_cost(g: &Graph, assignment: &[bool]) -> usize {
+    let mut seen = vec![false; g.graph.node_count()];
+    let mut stack = g.roots.clone();
+    let mut cost = 0;
+    while let Some(next) = stack.pop() {
+        if seen[next] {
+            continue;
+        }
+        seen[next] = true;
+        let node = NodeIndex::new(next);
+        cost += g.graph[node].cost;
+        stack.extend(
+            g.graph
+                .neighbors(node)
+                .filter(|&next| assignment[next.index()])
+                .map(|next| next.index()),
+        );
+    }
+    cost
 }
 
 fn solve_naive(g: &mut Graph) -> Result<Solution, ExtractError> {
@@ -204,6 +254,21 @@ fn acyclic_subgraph_extraction() {
             "test {}: {} != {}",
             i, naive.cost, maxsat.cost
         );
+
+        let sat = solve_sat(&mut g);
+        assert!(g.check_constraints(&sat.assignment), "test {i}: invalid");
+        assert_eq!(naive.cost, sat.cost, "test {i}: naive vs sat");
+        assert_eq!(
+            sat.cost,
+            selected_reachable_cost(&g, &sat.assignment),
+            "test {i}: sat cost must match the selected subgraph"
+        );
+
+        let maxsat_scc = solve_sat_with(&mut g, &maxsat_scc());
+        assert_eq!(naive.cost, maxsat_scc.cost, "test {i}: naive vs maxsat_scc");
+
+        let sat_scc = solve_sat_with(&mut g, &sat_scc());
+        assert_eq!(naive.cost, sat_scc.cost, "test {i}: naive vs sat_scc");
     });
     let failed = count_fail_to_build.load(SeqCst);
     assert!(num - failed > 100, "only {} succeeded", num - failed);
@@ -250,10 +315,28 @@ fn solver_config_and_stats() {
     assert!(matches!(failure, ExtractError::Unsolved));
 }
 
+#[test]
+fn sat_zero_cost() {
+    let mut g = Graph::default();
+    let root = g.add_vertex(false, 0, || None);
+    let leaf = g.add_vertex(true, 0, || None);
+    g.set_roots([root]);
+    g.add_edges(root, [leaf]);
+
+    let mut stats = ExtractStats::default();
+    let solved = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(&sat(), None, &mut sink).unwrap()
+    };
+    assert_eq!(solved.cost, 0);
+    assert_eq!(stats.custom["sat.inc_scc.probes"], StatValue::Count(0));
+    assert_eq!(stats.custom["sat.inc_scc.optimal"], StatValue::Count(1));
+}
+
 /// The same abstract graph has multiple optimal assignments when built in
-/// different orders: both MaxSAT and the non-z3 exhaustive solver pick different
-/// ones. Once the construction order is fixed, repeated extractions must agree.
-/// This makes the determinism assertion non-vacuous.
+/// different orders: MaxSAT, the plain SAT baseline, and the non-z3 exhaustive
+/// solver pick different ones. Once the construction order is fixed, repeated
+/// extractions must agree. This makes the determinism assertion non-vacuous.
 #[test]
 fn ambiguous_extraction_is_deterministic_by_construction_order() {
     let attrs = [
@@ -324,6 +407,11 @@ fn ambiguous_extraction_is_deterministic_by_construction_order() {
         (solution.cost, solution.assignment)
     }
 
+    fn run_sat(g: &mut Graph) -> (usize, Vec<bool>) {
+        let solution = solve_sat(g);
+        (solution.cost, solution.assignment)
+    }
+
     let identity: Vec<usize> = (0..attrs.len()).collect();
     let reordered = [1, 6, 4, 5, 3, 2, 9, 7, 8, 0];
 
@@ -337,15 +425,24 @@ fn ambiguous_extraction_is_deterministic_by_construction_order() {
     let mut g = build(&reordered, &attrs, &edges, &groups);
     let naive_reordered = run_naive(&mut g);
 
+    let mut g = build(&identity, &attrs, &edges, &groups);
+    let sat_identity = run_sat(&mut g);
+    let mut g = build(&reordered, &attrs, &edges, &groups);
+    let sat_reordered = run_sat(&mut g);
+
     assert_eq!(maxsat_identity.0, maxsat_reordered.0);
     assert_ne!(maxsat_identity.1, maxsat_reordered.1);
     assert_eq!(naive_identity.0, naive_reordered.0);
     assert_ne!(naive_identity.1, naive_reordered.1);
+    assert_eq!(sat_identity.0, sat_reordered.0);
+    assert_ne!(sat_identity.1, sat_reordered.1);
 
     for _ in 0..4 {
         let mut g = build(&identity, &attrs, &edges, &groups);
         assert_eq!(maxsat_identity, run_maxsat(&mut g));
         let mut g = build(&identity, &attrs, &edges, &groups);
         assert_eq!(naive_identity, run_naive(&mut g));
+        let mut g = build(&identity, &attrs, &edges, &groups);
+        assert_eq!(sat_identity, run_sat(&mut g));
     }
 }

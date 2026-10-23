@@ -3,6 +3,8 @@
 //! ```text
 //! cargo run --release --bin bench -- --timeouts 5,30,60,300
 //! cargo run --release --bin bench -- --algorithm maxsat.inc_scc --timeouts 60
+//! cargo run --release --bin bench -- --algorithm 'sat.*' --timeouts 60
+//! cargo run --release --bin bench -- --list-algorithms
 //! ```
 //!
 //! A case passes when extraction returns the expected optimal cost within the
@@ -15,29 +17,45 @@ use std::{
 };
 
 use dateg_extractors::dag::{ExtractError, ExtractStats};
-use dateg_extractors_testkit::algorithms;
-use dateg_extractors_testkit::bench::cases;
+use dateg_extractors_testkit::algorithms::{self, Algorithm};
+use dateg_extractors_testkit::bench::{BenchCase, cases};
 use dateg_extractors_testkit::indexes::mem::extract_mem_with_stats;
 use dateg_extractors_testkit::sources::generated::build;
 
 struct Args {
-    algorithm: String,
+    algorithms: Vec<String>,
     timeouts: Vec<u64>,
     filter: Vec<String>,
     csv: Option<std::path::PathBuf>,
+    list_algorithms: bool,
 }
+
+type Record = (
+    String,
+    String,
+    u64,
+    String,
+    Option<usize>,
+    Option<usize>,
+    f64,
+    bool,
+    f64,
+    f64,
+    bool,
+);
 
 fn parse_args() -> Args {
     let mut args = Args {
-        algorithm: "maxsat.inc_scc".into(),
+        algorithms: vec!["maxsat.inc_scc".into()],
         timeouts: vec![5, 30, 60, 300],
         filter: vec![],
         csv: None,
+        list_algorithms: false,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--algorithm" => args.algorithm = iter.next().expect("--algorithm value"),
+            "--algorithm" => args.algorithms = split_list(&iter.next().expect("--algorithm value")),
             "--timeouts" => {
                 args.timeouts = iter
                     .next()
@@ -46,15 +64,9 @@ fn parse_args() -> Args {
                     .map(|value| value.trim().parse().expect("timeout seconds"))
                     .collect()
             }
-            "--cases" => {
-                args.filter = iter
-                    .next()
-                    .expect("--cases value")
-                    .split(',')
-                    .map(str::to_string)
-                    .collect()
-            }
+            "--cases" => args.filter = split_list(&iter.next().expect("--cases value")),
             "--csv" => args.csv = Some(iter.next().expect("--csv value").into()),
+            "--list-algorithms" => args.list_algorithms = true,
             other => panic!("unknown argument {other:?}"),
         }
     }
@@ -63,11 +75,40 @@ fn parse_args() -> Args {
     args
 }
 
+fn split_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 fn main() {
     let args = parse_args();
-    let algorithm = algorithms::by_name(&args.algorithm)
-        .unwrap_or_else(|| panic!("unknown algorithm {:?}", args.algorithm))
-        .clone();
+    if args.list_algorithms {
+        for algorithm in algorithms::all() {
+            println!("{}", algorithm.name);
+        }
+        return;
+    }
+
+    let mut selected_algorithms: Vec<Algorithm> = Vec::new();
+    for pattern in &args.algorithms {
+        let matches = algorithms::matching(pattern);
+        if matches.is_empty() {
+            panic!("no algorithms matched {pattern:?}");
+        }
+        for algorithm in matches {
+            if !selected_algorithms
+                .iter()
+                .any(|selected| selected.name == algorithm.name)
+            {
+                selected_algorithms.push(algorithm.clone());
+            }
+        }
+    }
+
     let mut selected: Vec<_> = cases()
         .into_iter()
         .filter(|case| {
@@ -79,6 +120,64 @@ fn main() {
     }
     selected.sort_by(|left, right| left.reference_seconds.total_cmp(&right.reference_seconds));
 
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+
+    let mut records = Vec::new();
+    for algorithm in &selected_algorithms {
+        run_algorithm(&args, algorithm, &selected, &mut records);
+    }
+
+    std::panic::set_hook(previous_hook);
+
+    if let Some(path) = &args.csv {
+        let mut text = String::from(
+            "case,algorithm,timeout_s,status,cost,expected,reference_s,reference_exact,time_s,build_s,pass\n",
+        );
+        for (
+            name,
+            algorithm,
+            timeout,
+            status,
+            cost,
+            expected,
+            reference,
+            reference_exact,
+            seconds,
+            build,
+            passed,
+        ) in &records
+        {
+            text.push_str(&format!(
+                "{name},{algorithm},{timeout},{status},{},{},{reference:.2},{reference_exact},{seconds:.6},{build:.6},{}\n",
+                cost.map(|cost| cost.to_string()).unwrap_or_default(),
+                expected
+                    .map(|expected| expected.to_string())
+                    .unwrap_or_default(),
+                if *passed { "pass" } else { "fail" }
+            ));
+        }
+        std::fs::write(path, text).expect("write csv");
+        println!("wrote {}", path.display());
+    }
+
+    if selected.iter().any(|case| case.expected_cost.is_none()) {
+        println!(
+            "* {} top-rung case(s) have no reference cost: a valid solution counts,\n  optimality is not checked.",
+            selected
+                .iter()
+                .filter(|case| case.expected_cost.is_none())
+                .count()
+        );
+    }
+}
+
+fn run_algorithm(
+    args: &Args,
+    algorithm: &Algorithm,
+    selected: &[BenchCase],
+    records: &mut Vec<Record>,
+) {
     println!(
         "algorithm={} cases={} timeouts={:?}",
         algorithm.name,
@@ -86,26 +185,22 @@ fn main() {
         args.timeouts
     );
     println!(
-        "{:<18} {:>8} {:>8} {:<9} {:>8} {:>8} {:>6}",
+        "{:<18} {:>8} {:>8} {:<16} {:>8} {:>10} {:>6}",
         "case", "build_s", "timeout", "status", "cost", "time_s", "pass"
     );
 
-    let previous_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-
-    let mut records = Vec::new();
     let mut pass_by_timeout = std::collections::BTreeMap::new();
     for timeout in args.timeouts.iter().copied() {
         pass_by_timeout.insert(timeout, 0usize);
     }
 
-    for case in &selected {
+    for case in selected {
         let build_started = Instant::now();
         let built = catch_unwind(AssertUnwindSafe(|| build(case.params)));
         let build_seconds = build_started.elapsed().as_secs_f64();
         let Ok((green, root, _)) = built else {
             println!(
-                "{:<18} {:>8.2} {:>8} {:<9} {:>8} {:>8} {:>6}",
+                "{:<18} {:>8.2} {:>8} {:<16} {:>8} {:>10} {:>6}",
                 case.name, build_seconds, "-", "saturation_failed", "-", "-", "FAIL"
             );
             continue;
@@ -163,39 +258,6 @@ fn main() {
         }
     }
 
-    std::panic::set_hook(previous_hook);
-
-    if let Some(path) = &args.csv {
-        let mut text = String::from(
-            "case,algorithm,timeout_s,status,cost,expected,reference_s,reference_exact,time_s,build_s,pass\n",
-        );
-        for (
-            name,
-            algorithm,
-            timeout,
-            status,
-            cost,
-            expected,
-            reference,
-            reference_exact,
-            seconds,
-            build,
-            passed,
-        ) in &records
-        {
-            text.push_str(&format!(
-                "{name},{algorithm},{timeout},{status},{},{},{reference:.2},{reference_exact},{seconds:.6},{build:.6},{}\n",
-                cost.map(|cost| cost.to_string()).unwrap_or_default(),
-                expected
-                    .map(|expected| expected.to_string())
-                    .unwrap_or_default(),
-                if *passed { "pass" } else { "fail" }
-            ));
-        }
-        std::fs::write(path, text).expect("write csv");
-        println!("wrote {}", path.display());
-    }
-
     println!();
     let total = selected.len();
     for (timeout, passed) in pass_by_timeout {
@@ -203,15 +265,6 @@ fn main() {
         println!(
             "passrate {} at timeout {:>5}s: {}/{} ({:.1}%)",
             algorithm.name, timeout, passed, total, percent
-        );
-    }
-    if selected.iter().any(|case| case.expected_cost.is_none()) {
-        println!(
-            "* {} top-rung case(s) have no reference cost: a valid solution counts,\n  optimality is not checked.",
-            selected
-                .iter()
-                .filter(|case| case.expected_cost.is_none())
-                .count()
         );
     }
 }

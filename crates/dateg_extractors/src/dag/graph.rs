@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, sync::LazyLock, time::Instant};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    sync::LazyLock,
+    time::Instant,
+};
 
 use petgraph::{
     Direction::{Incoming, Outgoing},
@@ -9,10 +13,16 @@ use petgraph::{
 
 use super::{ExtractError, StatsSink};
 
-mod solve_max_sat;
-mod solve_naive;
+mod common;
+mod max_sat_inc_scc;
+mod naive;
+mod sat_inc_scc;
 #[cfg(test)]
 mod tests;
+
+pub use common::CycleBlocking;
+pub use max_sat_inc_scc::MaxSatIncSccConfig;
+pub use sat_inc_scc::SatIncSccConfig;
 
 /// Extraction graph.
 ///
@@ -36,27 +46,19 @@ struct Vertex {
 }
 
 /// Selects the extraction algorithm.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SolverConfig {
     /// Exhaustive search. Only suitable for small graphs; intended as a test oracle.
     Naive,
     /// Incremental MaxSAT. After each model, block every SCC in the selected
     /// subgraph and re-solve until the selected subgraph is acyclic.
-    MaxSatIncSccBlocking(MaxSatIncSccBlockingConfig),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MaxSatIncSccBlockingConfig {
-    /// Preemptively block all 4-cycles before the first solve.
-    pub preemptive_4cycles: bool,
-}
-
-impl Default for MaxSatIncSccBlockingConfig {
-    fn default() -> Self {
-        Self {
-            preemptive_4cycles: true,
-        }
-    }
+    MaxSatIncScc(MaxSatIncSccConfig),
+    /// Plain SAT with a cost-bound assertion, refined by repeated probes. The
+    /// first model has no cost bound and only has to be acyclic; its cost is
+    /// the initial upper bound. Probes then narrow the bound between zero and
+    /// that cost. When the deadline expires during improvement, the best
+    /// acyclic model found so far is returned.
+    SatIncScc(SatIncSccConfig),
 }
 
 #[derive(Debug)]
@@ -127,17 +129,21 @@ impl Graph {
             "solver.name",
             match config {
                 SolverConfig::Naive => "naive",
-                SolverConfig::MaxSatIncSccBlocking(_) => "maxsat.inc_scc",
+                SolverConfig::MaxSatIncScc(_) => "maxsat.inc_scc",
+                SolverConfig::SatIncScc(_) => "sat.inc_scc",
             },
         );
 
         let solve_started = Instant::now();
         let assignment = match config {
-            SolverConfig::Naive => {
-                solve_naive::solve(self, deadline).map(|(_, assignment)| assignment)
-            }
-            SolverConfig::MaxSatIncSccBlocking(config) => (|| {
-                let mut solver = solve_max_sat::DagExtractor::new(self, config, deadline)?;
+            SolverConfig::Naive => naive::solve(self, deadline).map(|(_, assignment)| assignment),
+            SolverConfig::MaxSatIncScc(config) => (|| {
+                let mut solver =
+                    max_sat_inc_scc::MaxSatIncSccExtractor::new(self, config, deadline)?;
+                solver.solve(deadline, stats)
+            })(),
+            SolverConfig::SatIncScc(config) => (|| {
+                let mut solver = sat_inc_scc::SatIncSccExtractor::new(self, config, deadline)?;
                 solver.solve(deadline, stats)
             })(),
         };
@@ -268,6 +274,77 @@ impl Graph {
             .filter(|comp| comp.len() > 1)
             .map(|comp| comp.iter().map(|nx| nx.index()).collect())
             .collect()
+    }
+
+    /// Shortest directed cycle in one strongly connected component.
+    ///
+    /// BFS from each start reaches the first edge back to the start on the
+    /// shortest such cycle; the global minimum over starts is the component's
+    /// girth. Only selected vertices inside the component are traversed.
+    fn shortest_cycle(&self, used: &[bool], component: &[VertexId]) -> Option<Vec<VertexId>> {
+        if component.len() < 2 {
+            return None;
+        }
+        let mut in_component = vec![false; self.graph.node_count()];
+        for &node in component {
+            in_component[node] = true;
+        }
+
+        let mut best: Option<Vec<VertexId>> = None;
+        for &start in component {
+            if best.as_ref().is_some_and(|cycle| cycle.len() == 2) {
+                break;
+            }
+            let Some(cycle) = self.shortest_cycle_from(start, used, &in_component) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|best| cycle.len() < best.len()) {
+                best = Some(cycle);
+            }
+        }
+        best
+    }
+
+    fn shortest_cycle_from(
+        &self,
+        start: VertexId,
+        used: &[bool],
+        in_component: &[bool],
+    ) -> Option<Vec<VertexId>> {
+        let mut distance = vec![usize::MAX; self.graph.node_count()];
+        let mut parent = vec![usize::MAX; self.graph.node_count()];
+        let mut queue = VecDeque::new();
+        distance[start] = 0;
+        queue.push_back(start);
+
+        while let Some(node) = queue.pop_front() {
+            for next in self
+                .graph
+                .neighbors(NodeIndex::new(node))
+                .map(|ni| ni.index())
+            {
+                if !used[next] || !in_component[next] {
+                    continue;
+                }
+                if next == start {
+                    let mut cycle = Vec::with_capacity(distance[node] + 1);
+                    let mut current = node;
+                    while current != start {
+                        cycle.push(current);
+                        current = parent[current];
+                    }
+                    cycle.push(start);
+                    cycle.reverse();
+                    return Some(cycle);
+                }
+                if distance[next] == usize::MAX {
+                    distance[next] = distance[node] + 1;
+                    parent[next] = node;
+                    queue.push_back(next);
+                }
+            }
+        }
+        None
     }
 
     fn is_acyclic(&self, assignment: &[bool]) -> bool {

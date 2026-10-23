@@ -24,6 +24,7 @@ pub fn run_filtered(
             let oracle_costs = oracle_costs(case);
             algorithms::all()
                 .par_iter()
+                .filter(|algorithm| !algorithm.bench_only)
                 .map(move |algorithm| check(case, algorithm, &oracle_costs))
         })
         .collect();
@@ -57,7 +58,7 @@ fn oracle_costs(case: &Case) -> HashMap<&'static str, Result<usize, String>> {
     let mut needed = vec![];
     if matches!(case.expected, Expected::Unknown) {
         for algorithm in algorithms::all() {
-            if algorithm.fit(case.complexity) == Fit::Infeasible {
+            if algorithm.bench_only || algorithm.fit(case.complexity) == Fit::Infeasible {
                 continue;
             }
             for name in algorithm.oracles {
