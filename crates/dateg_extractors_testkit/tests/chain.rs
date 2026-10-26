@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use dateg_extractors::dag::{ExtractError, ExtractStats, StatValue};
+use dateg_extractors::dag::{Error, ExtractStats, StatValue};
 use dateg_extractors_testkit::algorithms;
 use dateg_extractors_testkit::indexes::mem::extract_mem_with_stats;
 use dateg_extractors_testkit::sources::generated::{self, Params, memory_weights, rules_by_name};
@@ -31,7 +31,7 @@ fn build(
 
 fn algorithm(name: &str) -> algorithms::Algorithm {
     let mut algorithm = algorithms::by_name(name).unwrap().clone();
-    algorithm.timeout = Duration::from_secs(10);
+    algorithm.config.timeout = Some(Duration::from_secs(10));
     algorithm
 }
 
@@ -97,7 +97,7 @@ fn chain_reports_unsolved_when_the_rollback_budget_runs_out() {
     let mut stats = ExtractStats::default();
     let failure =
         extract_mem_with_stats(&green, root, &algorithm("chain"), Some(&mut stats)).unwrap_err();
-    assert!(matches!(failure, ExtractError::Unsolved));
+    assert!(matches!(failure, Error::NotFound));
     assert_eq!(stats.custom["chain.shape"], StatValue::Text("ok".into()));
     assert_eq!(
         stats.custom["chain.result"],

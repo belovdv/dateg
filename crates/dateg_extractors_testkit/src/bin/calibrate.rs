@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use dateg_extractors::dag::ExtractError;
+use dateg_extractors::dag::Error;
 use dateg_extractors_testkit::algorithms;
 use dateg_extractors_testkit::indexes::mem::extract_mem;
 use dateg_extractors_testkit::sources::generated::{
@@ -26,15 +26,15 @@ fn try_steps(params: Params, timeout: Duration) -> Outcome {
     let mut algorithm = algorithms::by_name("maxsat.inc_scc")
         .expect("maxsat algorithm")
         .clone();
-    algorithm.timeout = timeout;
+    algorithm.config.timeout = Some(timeout);
     let started = Instant::now();
     match extract_mem(&m, root, &algorithm) {
         Ok(cost) => Outcome::Solved {
             cost,
             time: started.elapsed(),
         },
-        Err(ExtractError::Timeout) => Outcome::Timeout,
-        Err(ExtractError::Unsolved | ExtractError::Unsolvable) => Outcome::Unsolved,
+        Err(Error::Timeout) => Outcome::Timeout,
+        Err(Error::NotFound | Error::Infeasible) => Outcome::Unsolved,
         Err(_) => Outcome::Other,
     }
 }

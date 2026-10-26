@@ -23,8 +23,8 @@ use std::{collections::VecDeque, time::Instant};
 
 use petgraph::{Direction::Outgoing, graph::NodeIndex};
 
-use super::super::{Graph, VertexId, domination};
-use crate::dag::{ExtractError, StatsSink, check_deadline};
+use super::super::{Graph, VertexId, View, domination, reachable};
+use crate::dag::{Error, StatsSink, check_deadline};
 
 /// Candidate rejections before giving up.
 const MAX_ROLLBACKS: u64 = 1_048_576;
@@ -33,20 +33,24 @@ const CHECK_EVERY: u64 = 256;
 
 pub(super) fn solve(
     graph: &Graph,
+    roots: &[VertexId],
+    view: &View,
     deadline: Option<Instant>,
+    soft: Option<Instant>,
     stats: &mut StatsSink<'_>,
-) -> Result<Vec<bool>, ExtractError> {
+) -> Result<Vec<bool>, Error> {
     check_deadline(deadline)?;
-    let tables = Tables::new(graph);
-    let Some(shape) = Shape::detect(graph, &tables) else {
+    let domain = reachable(graph, roots, view);
+    let tables = Tables::new(graph, &domain);
+    let Some(shape) = Shape::detect(graph, roots, &domain, &tables) else {
         stats.text("chain.shape", "unsupported");
-        return Err(ExtractError::Unsolved);
+        return Err(Error::NotFound);
     };
     stats.text("chain.shape", "ok");
 
     let started = Instant::now();
     let mut attempt = Attempt::new(graph, shape, tables);
-    let outcome = attempt.run(deadline, stats);
+    let outcome = attempt.run(deadline, soft, stats);
     stats.duration("chain.search", started.elapsed());
     stats.count("chain.attempts", attempt.attempts);
     stats.count("chain.rollbacks", attempt.rollbacks);
@@ -58,10 +62,10 @@ pub(super) fn solve(
     if assignment.is_none() {
         stats.text("chain.result", "unsolved");
     }
-    assignment.ok_or(ExtractError::Unsolved)
+    assignment.ok_or(Error::NotFound)
 }
 
-/// Immutable adjacency derived from the used constructors.
+/// Immutable adjacency derived from the enabled domain.
 struct Tables {
     /// Constructor -> produced class.
     output: Vec<Option<VertexId>>,
@@ -82,7 +86,7 @@ struct Tables {
 }
 
 impl Tables {
-    fn new(graph: &Graph) -> Self {
+    fn new(graph: &Graph, domain: &[bool]) -> Self {
         let count = graph.graph.node_count();
         let mut output = vec![None; count];
         let mut consumes = vec![Vec::new(); count];
@@ -93,7 +97,7 @@ impl Tables {
         let mut input_free = Vec::new();
 
         for node in graph.graph.node_indices() {
-            if !graph.used[node.index()] || !graph.graph[node].is_all {
+            if !domain[node.index()] || !graph.graph[node].is_all {
                 continue;
             }
             let id = node.index();
@@ -102,7 +106,7 @@ impl Tables {
                 .consumes
                 .iter()
                 .copied()
-                .filter(|&value| graph.used[value])
+                .filter(|&value| domain[value])
                 .collect();
             for &value in &consumes[id] {
                 consumable[value] = true;
@@ -114,7 +118,7 @@ impl Tables {
             let mut unavailable = 0u32;
             let mut unusable = false;
             for input in graph.graph.neighbors_directed(node, Outgoing) {
-                if graph.used[input.index()] {
+                if domain[input.index()] {
                     unavailable += 1;
                     users[input.index()].push(id);
                 } else {
@@ -129,7 +133,7 @@ impl Tables {
 
         let mut shape_ok = true;
         for node in graph.graph.node_indices() {
-            if !graph.used[node.index()] || !graph.graph[node].is_all {
+            if !domain[node.index()] || !graph.graph[node].is_all {
                 continue;
             }
             let id = node.index();
@@ -140,7 +144,7 @@ impl Tables {
             let consumable_inputs = graph
                 .graph
                 .neighbors_directed(node, Outgoing)
-                .filter(|&next| graph.used[next.index()])
+                .filter(|&next| domain[next.index()])
                 .filter(|&next| consumable[next.index()])
                 .count();
             if consumable_inputs > 1 {
@@ -172,12 +176,12 @@ struct Shape {
 }
 
 impl Shape {
-    fn detect(graph: &Graph, tables: &Tables) -> Option<Self> {
+    fn detect(graph: &Graph, roots: &[VertexId], domain: &[bool], tables: &Tables) -> Option<Self> {
         let count = graph.graph.node_count();
-        if graph.roots.len() != 1 {
+        if roots.len() != 1 {
             return None;
         }
-        let root = graph.roots[0];
+        let root = roots[0];
         if graph.graph[NodeIndex::new(root)].is_all {
             return None;
         }
@@ -236,7 +240,7 @@ impl Shape {
 
         let mut consumers: Vec<Vec<VertexId>> = vec![Vec::new(); count];
         for node in graph.graph.node_indices() {
-            if !graph.used[node.index()] || !graph.graph[node].is_all {
+            if !domain[node.index()] || !graph.graph[node].is_all {
                 continue;
             }
             let producer = node.index();
@@ -378,8 +382,9 @@ impl<'a> Attempt<'a> {
     fn run(
         &mut self,
         deadline: Option<Instant>,
+        soft: Option<Instant>,
         stats: &mut StatsSink<'_>,
-    ) -> Result<Option<Vec<bool>>, ExtractError> {
+    ) -> Result<Option<Vec<bool>>, Error> {
         let base = self.shape.base;
         let root = self.shape.root;
         if !self.available[base] {
@@ -396,6 +401,9 @@ impl<'a> Attempt<'a> {
             steps += 1;
             if steps.is_multiple_of(CHECK_EVERY) {
                 check_deadline(deadline)?;
+                if soft.is_some_and(|soft| Instant::now() >= soft) {
+                    return Err(Error::Timeout);
+                }
             }
 
             let current = stack.last().expect("frame").current;

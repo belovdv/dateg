@@ -1,56 +1,33 @@
-use std::time::{Duration, Instant};
-
+/// Public solver error.
 #[derive(Debug)]
-pub enum ExtractError {
+pub enum Error {
     RootNotCanonical,
     /// The root is not present in the selected constructor tables.
     RootMissing,
-    /// The solver found no valid acyclic assignment but did not prove that
-    /// none exists (heuristic or imprecise solvers).
-    Unsolved,
-    /// The solver proved that no valid acyclic assignment exists.
-    Unsolvable,
     /// The configured wall-clock budget was exhausted.
     Timeout,
+    /// No solution was found, but infeasibility was not proved.
+    NotFound,
+    /// The solver proved that no valid acyclic assignment exists.
+    Infeasible,
     /// The solver produced an assignment that failed validation.
     InvalidSolution,
     /// Solver-specific or internal failure.
-    Other(anyhow::Error),
+    Custom(String),
 }
 
-impl std::fmt::Display for ExtractError {
+impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RootNotCanonical => write!(f, "please canonicalize root token"),
             Self::RootMissing => write!(f, "root value is not present in the extracted tables"),
-            Self::Unsolved => write!(f, "solver found no solution"),
-            Self::Unsolvable => write!(f, "solver proved no solution exists"),
             Self::Timeout => write!(f, "solver timed out"),
+            Self::NotFound => write!(f, "solver found no solution"),
+            Self::Infeasible => write!(f, "solver proved no solution exists"),
             Self::InvalidSolution => write!(f, "solver produced an invalid assignment"),
-            Self::Other(error) => error.fmt(f),
+            Self::Custom(message) => write!(f, "{message}"),
         }
     }
 }
 
-impl std::error::Error for ExtractError {}
-
-pub(crate) fn check_deadline(deadline: Option<Instant>) -> Result<(), ExtractError> {
-    match deadline {
-        Some(deadline) if Instant::now() >= deadline => Err(ExtractError::Timeout),
-        _ => Ok(()),
-    }
-}
-
-pub(crate) fn remaining(deadline: Option<Instant>) -> Result<Option<Duration>, ExtractError> {
-    match deadline {
-        Some(deadline) => {
-            let now = Instant::now();
-            if now >= deadline {
-                Err(ExtractError::Timeout)
-            } else {
-                Ok(Some(deadline - now))
-            }
-        }
-        None => Ok(None),
-    }
-}
+impl std::error::Error for Error {}

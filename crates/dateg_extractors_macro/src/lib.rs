@@ -54,7 +54,7 @@ pub fn index_tree(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - `enum EnumOfConstructors { Constructor(Arg, ...), ... } ...`
 /// - trait implementations
 /// - `fn Index::extract(&EGraph, TokenOpaque, table tuples, &ExtractOptions,
-///   Option<&mut ExtractStats>) -> Result<Extraction<Self>, ExtractError>`
+///   Option<&mut ExtractStats>) -> Result<Extraction<Self>, Error>`
 #[proc_macro]
 pub fn index_dag(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as Input);
@@ -255,7 +255,7 @@ impl Input {
                 quote! {
                     Result<
                         dateg_extractors::dag::Extraction<Self>,
-                        dateg_extractors::dag::ExtractError,
+                        dateg_extractors::dag::Error,
                     >
                 },
             ),

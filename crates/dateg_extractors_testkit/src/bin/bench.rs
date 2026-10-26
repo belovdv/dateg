@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use dateg_extractors::dag::{ExtractError, ExtractStats};
+use dateg_extractors::dag::{Error, ExtractStats};
 use dateg_extractors_testkit::algorithms::{self, Algorithm};
 use dateg_extractors_testkit::bench::{BenchCase, cases};
 use dateg_extractors_testkit::indexes::mem::extract_mem_with_stats;
@@ -207,7 +207,7 @@ fn run_algorithm(
 
         for timeout in args.timeouts.iter().copied() {
             let mut run = algorithm.clone();
-            run.timeout = Duration::from_secs(timeout);
+            run.config.timeout = Some(Duration::from_secs(timeout));
             let mut stats = ExtractStats::default();
             let started = Instant::now();
             let outcome = catch_unwind(AssertUnwindSafe(|| {
@@ -222,9 +222,9 @@ fn run_algorithm(
                     // can check.
                     None => ("solved_unverified", Some(cost), true),
                 },
-                Ok(Err(ExtractError::Timeout)) => ("timeout", None, false),
-                Ok(Err(ExtractError::Unsolved)) => ("unsolved", None, false),
-                Ok(Err(ExtractError::Unsolvable)) => ("unsolvable", None, false),
+                Ok(Err(Error::Timeout)) => ("timeout", None, false),
+                Ok(Err(Error::NotFound)) => ("unsolved", None, false),
+                Ok(Err(Error::Infeasible)) => ("unsolvable", None, false),
                 Ok(Err(_)) => ("error", None, false),
                 Err(_) => ("panic", None, false),
             };

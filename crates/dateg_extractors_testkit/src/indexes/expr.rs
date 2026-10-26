@@ -1,7 +1,7 @@
 #![allow(clippy::enum_variant_names)]
 
 use dateg::TokenOpaque;
-use dateg_extractors::dag::{ExtractError, ExtractStats, index_dag};
+use dateg_extractors::dag::{Error, ExtractStats, index_dag};
 
 use crate::algorithms::Algorithm;
 use crate::indexes::validate_index;
@@ -46,7 +46,7 @@ pub fn extract_expr(
     m: &Memory,
     root: TokenOpaque<Int>,
     algorithm: &Algorithm,
-) -> Result<usize, ExtractError> {
+) -> Result<usize, Error> {
     extract_expr_with(m, root, algorithm, None)
 }
 
@@ -55,7 +55,7 @@ pub fn extract_expr_with(
     root: TokenOpaque<Int>,
     algorithm: &Algorithm,
     stats: Option<&mut ExtractStats>,
-) -> Result<usize, ExtractError> {
+) -> Result<usize, Error> {
     let extraction =
         ExprIndex::extract(m, root, (m.one, m.inc, m.mul), &algorithm.options(), stats)?;
     let cost = validate_index(
@@ -84,7 +84,7 @@ pub fn extract_expr_eval(
     m: &Memory,
     root: TokenOpaque<Int>,
     algorithm: &Algorithm,
-) -> Result<(usize, usize), ExtractError> {
+) -> Result<(usize, usize), Error> {
     let extraction =
         ExprIndex::extract(m, root, (m.one, m.inc, m.mul), &algorithm.options(), None)?;
     let cost = validate_index(
@@ -105,7 +105,7 @@ pub fn extract_expr_string(
     m: &Memory,
     root: TokenOpaque<Int>,
     algorithm: &Algorithm,
-) -> Result<(usize, String), ExtractError> {
+) -> Result<(usize, String), Error> {
     let extraction =
         ExprIndex::extract(m, root, (m.one, m.inc, m.mul), &algorithm.options(), None)?;
     let cost = validate_index(
@@ -145,7 +145,7 @@ pub fn extract_full_expr(
     m: &Memory,
     root: TokenOpaque<Int>,
     algorithm: &Algorithm,
-) -> Result<usize, ExtractError> {
+) -> Result<usize, Error> {
     let extraction = FullExprIndex::extract(
         m,
         root,
@@ -172,7 +172,7 @@ pub fn extract_zero_expr(
     m: &Memory,
     root: TokenOpaque<Int>,
     algorithm: &Algorithm,
-) -> Result<usize, ExtractError> {
+) -> Result<usize, Error> {
     let extraction = ZeroExprIndex::extract(
         m,
         root,
@@ -199,7 +199,7 @@ pub fn extract_loop_string(
     m: &Memory,
     root: TokenOpaque<Int>,
     algorithm: &Algorithm,
-) -> Result<(usize, String), ExtractError> {
+) -> Result<(usize, String), Error> {
     let extraction = LoopIndex::extract(
         m,
         root,
@@ -239,6 +239,6 @@ pub fn extract_loop(
     m: &Memory,
     root: TokenOpaque<Int>,
     algorithm: &Algorithm,
-) -> Result<usize, ExtractError> {
+) -> Result<usize, Error> {
     extract_loop_string(m, root, algorithm).map(|(cost, _)| cost)
 }

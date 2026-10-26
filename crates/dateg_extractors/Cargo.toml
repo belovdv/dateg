@@ -9,7 +9,6 @@ dateg_extractors_macro.path = "../dateg_extractors_macro"
 ahash.workspace = true
 paste.workspace = true
 easy-smt.workspace = true
-anyhow.workspace = true
 log.workspace = true
 petgraph = "0.8.3"
 

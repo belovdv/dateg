@@ -1,11 +1,18 @@
 use std::time::Instant;
 
 use super::*;
-use crate::dag::{ExtractError, check_deadline};
+use crate::dag::{Error, check_deadline};
 
-pub fn solve(g: &Graph, deadline: Option<Instant>) -> Result<(usize, Vec<bool>), ExtractError> {
+pub fn solve(
+    g: &Graph,
+    roots: &[VertexId],
+    view: &View,
+    deadline: Option<Instant>,
+    soft: Option<Instant>,
+) -> Result<(usize, Vec<bool>), Error> {
     let n = g.graph.node_count();
     assert!(n < 64, "naive solver supports at most 63 nodes, got {n}");
+    let domain = reachable(g, roots, view);
 
     let mut best_cost = usize::MAX;
     let mut best_assignment = vec![false; n];
@@ -16,21 +23,24 @@ pub fn solve(g: &Graph, deadline: Option<Instant>) -> Result<(usize, Vec<bool>),
     for mask in 0..max_mask {
         if mask % 1024 == 0 {
             check_deadline(deadline)?;
+            if soft.is_some_and(|soft| Instant::now() >= soft) {
+                return if best_cost == usize::MAX {
+                    Err(Error::Timeout)
+                } else {
+                    Ok((best_cost, best_assignment))
+                };
+            }
         }
 
         // Only root-reachable, enabled vertices are solver variables. Leaving
         // the other bits free would let a mask "select" a disabled vertex and
         // then leak it into the collected index.
-        let assignment: Vec<bool> = (0..n).map(|i| g.used[i] && (mask >> i) & 1 != 0).collect();
-        if !g.check_constraints(&assignment) {
+        let assignment: Vec<bool> = (0..n).map(|i| domain[i] && (mask >> i) & 1 != 0).collect();
+        if !check_constraints(g, roots, view, &assignment) {
             continue;
         }
 
-        let cost: usize = (0..n)
-            .filter(|&i| g.used[i] && assignment[i])
-            .map(|i| g.graph[NodeIndex::new(i)].cost)
-            .sum();
-
+        let cost = assignment_cost(g, view, &assignment);
         if cost < best_cost {
             best_cost = cost;
             best_assignment = assignment;
@@ -38,7 +48,7 @@ pub fn solve(g: &Graph, deadline: Option<Instant>) -> Result<(usize, Vec<bool>),
     }
 
     if best_cost == usize::MAX {
-        Err(ExtractError::Unsolvable)
+        Err(Error::Infeasible)
     } else {
         Ok((best_cost, best_assignment))
     }

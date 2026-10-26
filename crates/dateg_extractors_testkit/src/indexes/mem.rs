@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use dateg::TokenOpaque;
-use dateg_extractors::dag::{ExtractError, index_dag};
+use dateg_extractors::dag::{Error, index_dag};
 
 use crate::algorithms::Algorithm;
 use crate::memory::{Int, Mem, Memory};
@@ -142,7 +142,7 @@ fn extract(
     node: Node,
     algorithm: &Algorithm,
     stats: Option<&mut dateg_extractors::dag::ExtractStats>,
-) -> Result<usize, ExtractError> {
+) -> Result<usize, Error> {
     let extraction = MemIndex::extract(
         m,
         root,
@@ -282,7 +282,7 @@ pub fn extract_mem(
     m: &Memory,
     root: TokenOpaque<Mem>,
     algorithm: &Algorithm,
-) -> Result<usize, ExtractError> {
+) -> Result<usize, Error> {
     extract(m, root, Node::Mem(root), algorithm, None)
 }
 
@@ -291,7 +291,7 @@ pub fn extract_mem_with_stats(
     root: TokenOpaque<Mem>,
     algorithm: &Algorithm,
     stats: Option<&mut dateg_extractors::dag::ExtractStats>,
-) -> Result<usize, ExtractError> {
+) -> Result<usize, Error> {
     extract(m, root, Node::Mem(root), algorithm, stats)
 }
 
@@ -299,6 +299,6 @@ pub fn extract_int(
     m: &Memory,
     root: TokenOpaque<Int>,
     algorithm: &Algorithm,
-) -> Result<usize, ExtractError> {
+) -> Result<usize, Error> {
     extract(m, root, Node::Int(root), algorithm, None)
 }

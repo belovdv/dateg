@@ -1,9 +1,9 @@
 //! Cheap graph reductions applied before solving.
 //!
 //! The reductions only remove alternatives; vertex ids stay stable and removed
-//! vertices are excluded via [`super::Graph::set_disabled`]. This keeps the
-//! reduced model a model of the full graph: an assignment on the reduced graph
-//! is valid on the full graph as long as disabled vertices are unselected.
+//! vertices are excluded in the materialized view. This keeps the reduced model
+//! a model of the full graph: an assignment on the reduced view is valid on the
+//! full graph as long as disabled vertices are unselected.
 //!
 //! Rules (all local, no fixed points):
 //! - self-referential alternative: a constructor whose own output class is one
@@ -18,31 +18,30 @@
 
 use petgraph::{Direction::Outgoing, graph::NodeIndex};
 
-use super::{Graph, VertexId, domination};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FilterMode {
-    /// Preserve at least one optimal solution. The current implementation is
-    /// conservative: an alternative is removed only when a kept alternative
-    /// with a subset of its inputs is no more expensive. Future reductions may
-    /// remove more as long as this contract holds.
-    Optimal,
-    /// Remove dominated alternatives regardless of cost. Preserves existence,
-    /// not the optimum.
-    Validity,
-}
+use super::{FilterMode, Graph, VertexId, domination};
 
 #[derive(Debug)]
-pub struct FilterReport {
-    pub disabled: Vec<bool>,
-    pub removed_self: u64,
-    pub removed_duplicate: u64,
-    pub removed_dominated: u64,
-    pub alternatives: u64,
-    pub consumers: u64,
+pub(crate) struct FilterReport {
+    pub(crate) disabled: Vec<bool>,
+    pub(crate) removed_self: u64,
+    pub(crate) removed_duplicate: u64,
+    pub(crate) removed_dominated: u64,
+    pub(crate) alternatives: u64,
+    pub(crate) consumers: u64,
 }
 
-pub fn filter(graph: &Graph, mode: FilterMode) -> FilterReport {
+pub(crate) fn filter(graph: &Graph, mode: FilterMode) -> FilterReport {
+    let enabled = vec![true; graph.graph.node_count()];
+    filter_with_enabled(graph, mode, &enabled)
+}
+
+/// Filter relative to an existing view. Already disabled constructors are not
+/// candidates and cannot act as dominators.
+pub(crate) fn filter_with_enabled(
+    graph: &Graph,
+    mode: FilterMode,
+    enabled: &[bool],
+) -> FilterReport {
     let count = graph.graph.node_count();
     let mut disabled = vec![false; count];
     let mut removed_self = 0;
@@ -66,6 +65,7 @@ pub fn filter(graph: &Graph, mode: FilterMode) -> FilterReport {
         if domination::input_set(graph, constructor)
             .binary_search(&class)
             .is_ok()
+            && enabled[constructor]
         {
             disabled[constructor] = true;
             removed_self += 1;
@@ -80,7 +80,11 @@ pub fn filter(graph: &Graph, mode: FilterMode) -> FilterReport {
             .graph
             .neighbors_directed(class, Outgoing)
             .map(|next| next.index())
-            .filter(|&candidate| !disabled[candidate] && !domination::is_consumer(graph, candidate))
+            .filter(|&candidate| {
+                enabled[candidate]
+                    && !disabled[candidate]
+                    && !domination::is_consumer(graph, candidate)
+            })
             .collect();
         // Deterministic order: fewest inputs first, then cheapest, then id.
         candidates.sort_unstable_by_key(|&candidate| {
@@ -97,7 +101,7 @@ pub fn filter(graph: &Graph, mode: FilterMode) -> FilterReport {
             let cost = graph.graph[NodeIndex::new(candidate)].cost;
             let dominated = kept.iter().any(|(other_inputs, other_cost)| {
                 domination::is_subset(other_inputs, &inputs)
-                    && (mode == FilterMode::Validity || *other_cost <= cost)
+                    && (mode == FilterMode::AtLeastOneSolution || *other_cost <= cost)
             });
             if !dominated {
                 kept.push((inputs, cost));

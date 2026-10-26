@@ -1,30 +1,14 @@
 use std::time::Instant;
 
-use super::Graph;
-use super::common::{Check, CycleBlocking, SmtCore};
-use crate::dag::{ExtractError, StatsSink, check_deadline};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MaxSatIncSccConfig {
-    /// Preemptively block all 4-cycles before the first solve.
-    pub preemptive_4cycles: bool,
-    /// How cyclic models are refined.
-    pub cycle_blocking: CycleBlocking,
-}
-
-impl Default for MaxSatIncSccConfig {
-    fn default() -> Self {
-        Self {
-            preemptive_4cycles: true,
-            cycle_blocking: CycleBlocking::default(),
-        }
-    }
-}
+use super::common::{Check, SmtCore};
+use super::{CycleBlocking, Graph, MaxSatIncSccConfig, VertexId, View};
+use crate::dag::{Error, StatsSink, check_deadline};
 
 pub(super) struct MaxSatIncSccExtractor<'a> {
     core: SmtCore<'a>,
     preemptive_4cycles: bool,
     cycle_blocking: CycleBlocking,
+    soft: Option<Instant>,
 }
 
 enum Step {
@@ -35,18 +19,22 @@ enum Step {
 impl<'a> MaxSatIncSccExtractor<'a> {
     pub(super) fn new(
         g: &'a Graph,
+        roots: &'a [VertexId],
+        view: &'a View,
         config: &MaxSatIncSccConfig,
         deadline: Option<Instant>,
-    ) -> Result<Self, ExtractError> {
-        let core = SmtCore::new(g, deadline)?;
+        soft: Option<Instant>,
+    ) -> Result<Self, Error> {
+        let core = SmtCore::new(g, roots, view, deadline)?;
         let mut r = Self {
             core,
             preemptive_4cycles: config.preemptive_4cycles,
             cycle_blocking: config.cycle_blocking,
+            soft,
         };
 
         for node in r.core.g.graph.node_indices() {
-            if !r.core.g.used[node.index()] {
+            if !r.core.domain[node.index()] {
                 continue;
             }
             let cost = r.core.g.graph[node].cost;
@@ -68,13 +56,13 @@ impl<'a> MaxSatIncSccExtractor<'a> {
     }
 
     /// Increment for search.
-    fn try_solve(&mut self) -> Result<Step, ExtractError> {
+    fn try_solve(&mut self) -> Result<Step, Error> {
         match self.core.check(None)? {
-            Check::Unsat => Err(ExtractError::Unsolvable),
-            Check::Sat(used) => {
-                let blocked = self.core.block_cycles(&used, self.cycle_blocking);
+            Check::Unsat => Err(Error::Infeasible),
+            Check::Sat(selected) => {
+                let blocked = self.core.block_cycles(&selected, self.cycle_blocking);
                 if blocked.is_empty() {
-                    Ok(Step::Solved(used))
+                    Ok(Step::Solved(selected))
                 } else {
                     Ok(Step::Blocked {
                         cycles: blocked.len(),
@@ -88,7 +76,7 @@ impl<'a> MaxSatIncSccExtractor<'a> {
         &mut self,
         deadline: Option<Instant>,
         stats: &mut StatsSink<'_>,
-    ) -> Result<Vec<bool>, ExtractError> {
+    ) -> Result<Vec<bool>, Error> {
         check_deadline(deadline)?;
         let preemptive_started = Instant::now();
         if self.preemptive_4cycles {
@@ -105,6 +93,9 @@ impl<'a> MaxSatIncSccExtractor<'a> {
         let mut blocked_sccs = 0u64;
         loop {
             check_deadline(deadline)?;
+            if self.soft.is_some_and(|soft| Instant::now() >= soft) {
+                return Err(Error::Timeout);
+            }
             steps += 1;
             let step = self.try_solve();
             if let Ok(Step::Blocked { cycles }) = &step {

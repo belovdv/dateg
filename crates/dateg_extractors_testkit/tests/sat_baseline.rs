@@ -20,8 +20,8 @@ fn sat_baseline_improves_and_reports_optimality() {
         addresses: generated::DEFAULT_ADDRESSES,
     });
 
-    let mut algorithm = algorithms::by_name("sat.inc_scc").unwrap().clone();
-    algorithm.timeout = Duration::from_secs(10);
+    let mut algorithm = algorithms::by_name("sat.descending").unwrap().clone();
+    algorithm.config.timeout = Some(Duration::from_secs(10));
 
     let mut stats = ExtractStats::default();
     let cost = extract_mem_with_stats(&green, root, &algorithm, Some(&mut stats)).unwrap();
@@ -35,8 +35,8 @@ fn sat_baseline_improves_and_reports_optimality() {
         StatValue::Text(value) => value.as_str(),
         other => panic!("{key}: expected text, got {other:?}"),
     };
-    let stats_key = |suffix: &str| format!("sat.inc_scc.{suffix}");
-    assert_eq!(text("solver.name"), "sat.inc_scc");
+    let stats_key = |suffix: &str| format!("sat.descending.{suffix}");
+    assert_eq!(text("solver.name"), "sat.descending");
     assert_eq!(text(&stats_key("cycle_blocking")), "shortest");
     assert_eq!(text(&stats_key("descent_fraction")), "0.015625");
     let initial = count(&stats_key("initial_cost"));

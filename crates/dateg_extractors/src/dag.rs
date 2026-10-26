@@ -1,3 +1,4 @@
+mod deadline;
 mod error;
 mod graph;
 mod stats;
@@ -6,17 +7,19 @@ use std::{
     any::TypeId,
     collections::{BTreeMap, BTreeSet},
     marker::PhantomData,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use ahash::AHashMap;
 use dateg::*;
 
-use crate::dag::graph::VertexId;
+use crate::dag::graph::{
+    VertexId, View, assignment_cost, assignment_within_enabled, check_constraints,
+};
 
 pub use dateg_extractors_macro::index_dag;
-pub use error::ExtractError;
-pub(crate) use error::{check_deadline, remaining};
+pub(crate) use deadline::{check_deadline, remaining};
+pub use error::Error;
 pub use graph::*;
 pub(crate) use stats::StatsSink;
 pub use stats::{ExtractStats, StatValue};
@@ -69,7 +72,7 @@ pub struct Extractor<Index> {
     _p: PhantomData<Index>,
 
     dag: graph::Graph,
-    used: Vec<bool>,
+    selected: Vec<bool>,
 
     values: BTreeMap<Value, VertexId>,
     constructors: BTreeMap<(FunctionId, Vec<Value>), VertexId>,
@@ -91,29 +94,22 @@ fn register_callback<F>(callbacks: &mut Vec<(TypeId, F)>, tid: TypeId, callback:
 
 pub struct ExtractOptions {
     solver: SolverConfig,
-    timeout: Option<Duration>,
     validate: bool,
     filtration: Option<FilterMode>,
 }
 
 pub struct ExtractOptionsBuilder {
     solver: SolverConfig,
-    timeout: Option<Duration>,
     validate: bool,
     filtration: Option<FilterMode>,
 }
 
 impl ExtractOptions {
-    /// Default wall-clock budget. Disable explicitly with `timeout(None)`.
-    pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-
-    /// Start building options for `solver`.
-    ///
-    /// Defaults: validation enabled, [`Self::DEFAULT_TIMEOUT`].
+    /// Start options for `solver`; validation is on and no pre-filter is
+    /// applied. The overall budget is `solver.timeout`.
     pub fn builder(solver: SolverConfig) -> ExtractOptionsBuilder {
         ExtractOptionsBuilder {
             solver,
-            timeout: Some(Self::DEFAULT_TIMEOUT),
             validate: true,
             filtration: None,
         }
@@ -121,12 +117,6 @@ impl ExtractOptions {
 }
 
 impl ExtractOptionsBuilder {
-    /// Set the wall-clock budget; `None` disables it.
-    pub fn timeout(mut self, timeout: Option<Duration>) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
     /// Enable or disable validation of the solver assignment.
     pub fn validate(mut self, validate: bool) -> Self {
         self.validate = validate;
@@ -142,7 +132,6 @@ impl ExtractOptionsBuilder {
     pub fn build(self) -> ExtractOptions {
         ExtractOptions {
             solver: self.solver,
-            timeout: self.timeout,
             validate: self.validate,
             filtration: self.filtration,
         }
@@ -153,6 +142,8 @@ impl ExtractOptionsBuilder {
 pub struct Extraction<Index> {
     pub index: Index,
     pub cost: usize,
+    /// The solver outcome on the view it was found on; carries the assignment.
+    pub outcome: Outcome,
 }
 
 macro_rules! ensure {
@@ -170,15 +161,16 @@ impl<Index: Default> Extractor<Index> {
         root: impl TokenOpaqueMarker,
         options: &ExtractOptions,
         stats: Option<&mut ExtractStats>,
-    ) -> Result<Extraction<Index>, ExtractError> {
+    ) -> Result<Extraction<Index>, Error> {
         let started = Instant::now();
-        let deadline = options.timeout.map(|timeout| started + timeout);
+        let deadline = options.solver.timeout.map(|timeout| started + timeout);
+        let soft_deadline = options.solver.soft_timeout.map(|timeout| started + timeout);
         let mut stats = StatsSink(stats);
         if let Some(stats) = stats.0.as_deref_mut() {
             *stats = ExtractStats::default();
         }
 
-        let result = self.extract_inner(eg, root, options, deadline, &mut stats);
+        let result = self.extract_inner(eg, root, options, deadline, soft_deadline, &mut stats);
         stats.total(started.elapsed());
         result
     }
@@ -189,8 +181,9 @@ impl<Index: Default> Extractor<Index> {
         root: impl TokenOpaqueMarker,
         options: &ExtractOptions,
         deadline: Option<Instant>,
+        soft_deadline: Option<Instant>,
         stats: &mut StatsSink<'_>,
-    ) -> Result<Extraction<Index>, ExtractError> {
+    ) -> Result<Extraction<Index>, Error> {
         // Deterministic construction contract: callbacks are taken in
         // registration order, and each callback sorts its rows by egglog
         // `Value`. The graph handed to the solver is therefore stable for a
@@ -226,13 +219,13 @@ impl<Index: Default> Extractor<Index> {
         // the caller to do it.
         ensure!(
             root.as_token_opaque().canon(eg) == root.as_token_opaque(),
-            ExtractError::RootNotCanonical
+            Error::RootNotCanonical
         );
         let root_vertex = *self
             .values
             .get(&root.into_egglog())
-            .ok_or(ExtractError::RootMissing)?;
-        self.dag.set_roots([root_vertex]);
+            .ok_or(Error::RootMissing)?;
+        let mut base_enabled = vec![true; self.dag.node_count()];
         if let Some(mode) = options.filtration {
             let started = Instant::now();
             let report = graph::filter(&self.dag, mode);
@@ -241,8 +234,8 @@ impl<Index: Default> Extractor<Index> {
             stats.text(
                 "filtration.mode",
                 match mode {
-                    FilterMode::Validity => "validity",
-                    FilterMode::Optimal => "optimal",
+                    FilterMode::AtLeastOneSolution => "validity",
+                    FilterMode::AtLeastOneOptimal => "optimal",
                 },
             );
             stats.count("filtration.alternatives", report.alternatives);
@@ -251,18 +244,42 @@ impl<Index: Default> Extractor<Index> {
             stats.count("filtration.removed_duplicate", report.removed_duplicate);
             stats.count("filtration.removed_dominated", report.removed_dominated);
             stats.count("filtration.disabled", disabled);
-            self.dag.set_disabled(report.disabled);
+            for (index, &disabled) in report.disabled.iter().enumerate() {
+                if disabled {
+                    base_enabled[index] = false;
+                }
+            }
         }
 
-        let solution = self.dag.solve_with(&options.solver, deadline, stats)?;
+        let outcome = graph::solve_pipeline(
+            &self.dag,
+            &[root_vertex],
+            base_enabled.clone(),
+            &options.solver,
+            deadline,
+            soft_deadline,
+            stats,
+        )?;
+        let assignment = match &outcome {
+            Outcome::Optimal(assignment) => assignment.clone(),
+            Outcome::Any { assignment, .. } => assignment.clone(),
+            Outcome::Infeasible => return Err(Error::Infeasible),
+        };
+        let view = View::new(&self.dag, base_enabled, Vec::new());
+
+        ensure!(
+            assignment_within_enabled(&view, &assignment.selected),
+            Error::InvalidSolution
+        );
 
         if options.validate {
             let t = Instant::now();
-            let valid = self.dag.validate(&solution.assignment);
+            let valid = check_constraints(&self.dag, &[root_vertex], &view, &assignment.selected);
             stats.verify(t.elapsed());
-            ensure!(valid, ExtractError::InvalidSolution);
+            ensure!(valid, Error::InvalidSolution);
         }
-        self.used = solution.assignment;
+        let cost = assignment_cost(&self.dag, &view, &assignment.selected);
+        self.selected = assignment.selected.clone();
 
         let mut index = Index::default();
         for (_, collect) in std::mem::take(&mut self.callbacks_collect) {
@@ -271,7 +288,8 @@ impl<Index: Default> Extractor<Index> {
 
         Ok(Extraction {
             index,
-            cost: solution.cost,
+            cost,
+            outcome,
         })
     }
 
@@ -369,7 +387,7 @@ impl<Index: Default> Extractor<Index> {
                 let Some(&cstr) = ext.constructors.get(&(fid, input_key)) else {
                     continue;
                 };
-                if ext.used[cstr] {
+                if ext.selected[cstr] {
                     index.insert(output, C::into_variant(inputs));
                 }
             }

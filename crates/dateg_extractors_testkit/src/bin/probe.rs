@@ -23,7 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use dateg_extractors::dag::{CycleBlocking, ExtractError, ExtractStats, SolverConfig, StatValue};
+use dateg_extractors::dag::{AtomicAlgorithm, CycleBlocking, Error, ExtractStats, Node, StatValue};
 use dateg_extractors_testkit::algorithms;
 use dateg_extractors_testkit::indexes::mem::{CostModel, extract_mem_with_stats, set_cost_model};
 use dateg_extractors_testkit::sources::generated::{self, Params};
@@ -100,13 +100,26 @@ fn main() {
     )
     .expect("algorithm")
     .clone();
-    algorithm.timeout = if metrics_only {
+    let first_budget = std::env::var("PROBE_FIRST_BUDGET_MS")
+        .ok()
+        .map(|value| Duration::from_millis(value.parse().expect("PROBE_FIRST_BUDGET_MS")));
+    let first_share = std::env::var("PROBE_FIRST_SHARE")
+        .ok()
+        .map(|value| value.parse().expect("PROBE_FIRST_SHARE"));
+    if first_budget.is_some() || first_share.is_some() {
+        if let Some(config) =
+            algorithms::with_legacy_budgets(&algorithm.name, first_share, first_budget, None)
+        {
+            algorithm.config = config;
+        }
+    }
+    algorithm.config.timeout = Some(if metrics_only {
         Duration::ZERO
     } else {
         Duration::from_secs(timeout_secs)
-    };
-    match &mut algorithm.config {
-        SolverConfig::SatIncScc(config) => {
+    });
+    match &mut algorithm.config.pipeline {
+        Node::Atomic(AtomicAlgorithm::SatDescending(config)) => {
             if let Ok(value) = std::env::var("PROBE_PREEMPTIVE") {
                 config.preemptive_4cycles = parse_bool(&value);
             }
@@ -114,7 +127,7 @@ fn main() {
                 config.cycle_blocking = parse_cycle_blocking(&value);
             }
         }
-        SolverConfig::MaxSatIncScc(config) => {
+        Node::Atomic(AtomicAlgorithm::MaxSat(config)) => {
             if let Ok(value) = std::env::var("PROBE_PREEMPTIVE") {
                 config.preemptive_4cycles = parse_bool(&value);
             }
@@ -122,18 +135,7 @@ fn main() {
                 config.cycle_blocking = parse_cycle_blocking(&value);
             }
         }
-        SolverConfig::Naive => {}
-        SolverConfig::BestEffort(_) => {}
-        SolverConfig::Combinator(config) => {
-            if let Ok(value) = std::env::var("PROBE_FIRST_BUDGET_MS") {
-                config.first_budget = Some(Duration::from_millis(
-                    value.parse().expect("PROBE_FIRST_BUDGET_MS"),
-                ));
-            }
-            if let Ok(value) = std::env::var("PROBE_FIRST_SHARE") {
-                config.first_share = value.parse().expect("PROBE_FIRST_SHARE");
-            }
-        }
+        _ => {}
     }
 
     let mut stats = ExtractStats::default();
@@ -143,9 +145,9 @@ fn main() {
 
     let status = match &result {
         Ok(_) => "solved",
-        Err(ExtractError::Timeout) => "timeout",
-        Err(ExtractError::Unsolved) => "unsolved",
-        Err(ExtractError::Unsolvable) => "unsolvable",
+        Err(Error::Timeout) => "timeout",
+        Err(Error::NotFound) => "unsolved",
+        Err(Error::Infeasible) => "unsolvable",
         Err(_) => "other",
     };
     fields.push(format!("status={status}"));

@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use petgraph::dot::{Config, Dot};
 use rand::{
@@ -8,52 +8,160 @@ use rand::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-use crate::dag::{ExtractError, ExtractStats, StatValue, StatsSink};
+use crate::dag::{Error, ExtractStats, StatValue, StatsSink};
 
 use super::*;
 
+#[derive(Debug, PartialEq)]
+struct Solution {
+    assignment: Vec<bool>,
+    cost: usize,
+}
+
+fn solver(pipeline: Node) -> SolverConfig {
+    SolverConfig {
+        pipeline,
+        timeout: None,
+        soft_timeout: None,
+        name: None,
+    }
+}
+
 fn maxsat() -> SolverConfig {
-    SolverConfig::MaxSatIncScc(Default::default())
+    solver(Node::Atomic(AtomicAlgorithm::MaxSat(Default::default())))
 }
 
 fn sat() -> SolverConfig {
-    SolverConfig::SatIncScc(Default::default())
+    solver(Node::Atomic(AtomicAlgorithm::SatDescending(
+        Default::default(),
+    )))
 }
 
 fn best_effort() -> SolverConfig {
-    SolverConfig::BestEffort(BestEffortConfig::default())
+    solver(Node::Atomic(AtomicAlgorithm::Chain(
+        BestEffortConfig::default(),
+    )))
 }
 
 fn maxsat_scc() -> SolverConfig {
-    SolverConfig::MaxSatIncScc(MaxSatIncSccConfig {
+    solver(Node::Atomic(AtomicAlgorithm::MaxSat(MaxSatIncSccConfig {
         cycle_blocking: CycleBlocking::Scc,
         ..Default::default()
-    })
+    })))
 }
 
 fn sat_scc() -> SolverConfig {
-    SolverConfig::SatIncScc(SatIncSccConfig {
-        cycle_blocking: CycleBlocking::Scc,
-        ..Default::default()
-    })
+    solver(Node::Atomic(AtomicAlgorithm::SatDescending(
+        SatDescendingConfig {
+            cycle_blocking: CycleBlocking::Scc,
+            ..Default::default()
+        },
+    )))
 }
 
-fn solve(g: &mut Graph) -> Solution {
+#[derive(Default)]
+struct TestGraph {
+    inner: Graph,
+    roots: Vec<VertexId>,
+    disabled: Vec<bool>,
+}
+
+impl std::ops::Deref for TestGraph {
+    type Target = Graph;
+
+    fn deref(&self) -> &Graph {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for TestGraph {
+    fn deref_mut(&mut self) -> &mut Graph {
+        &mut self.inner
+    }
+}
+
+impl TestGraph {
+    fn set_roots(&mut self, roots: impl IntoIterator<Item = VertexId>) {
+        self.roots = roots.into_iter().collect();
+    }
+
+    fn set_disabled(&mut self, disabled: Vec<bool>) {
+        debug_assert!(
+            disabled.is_empty() || disabled.len() == self.inner.graph.node_count(),
+            "disabled mask must match the graph"
+        );
+        self.disabled = disabled;
+    }
+
+    fn enabled(&self) -> Vec<bool> {
+        let count = self.inner.graph.node_count();
+        if self.disabled.is_empty() {
+            vec![true; count]
+        } else {
+            self.disabled.iter().map(|&disabled| !disabled).collect()
+        }
+    }
+
+    fn view(&self) -> View {
+        View::new(&self.inner, self.enabled(), Vec::new())
+    }
+
+    fn solve_with(
+        &mut self,
+        config: &SolverConfig,
+        deadline: Option<Instant>,
+        stats: &mut StatsSink<'_>,
+    ) -> Result<Solution, Error> {
+        let outcome = super::pipeline::solve(
+            &self.inner,
+            &self.roots,
+            self.enabled(),
+            config,
+            deadline,
+            None,
+            stats,
+        )?;
+        match outcome {
+            Outcome::Optimal(assignment) | Outcome::Any { assignment, .. } => {
+                let view = self.view();
+                Ok(Solution {
+                    cost: assignment_cost(&self.inner, &view, &assignment.selected),
+                    assignment: assignment.selected,
+                })
+            }
+            Outcome::Infeasible => Err(Error::Infeasible),
+        }
+    }
+
+    fn check_constraints(&self, assignment: &[bool]) -> bool {
+        check_constraints(&self.inner, &self.roots, &self.view(), assignment)
+    }
+
+    fn assignment_cost(&self, assignment: &[bool]) -> usize {
+        assignment_cost(&self.inner, &self.view(), assignment)
+    }
+
+    fn validate(&self, assignment: &[bool]) -> bool {
+        check_constraints(&self.inner, &self.roots, &self.view(), assignment)
+    }
+}
+
+fn solve(g: &mut TestGraph) -> Solution {
     g.solve_with(&maxsat(), None, &mut StatsSink(None)).unwrap()
 }
 
-fn solve_sat_with(g: &mut Graph, config: &SolverConfig) -> Solution {
+fn solve_sat_with(g: &mut TestGraph, config: &SolverConfig) -> Solution {
     g.solve_with(config, None, &mut StatsSink(None)).unwrap()
 }
 
-fn solve_sat(g: &mut Graph) -> Solution {
+fn solve_sat(g: &mut TestGraph) -> Solution {
     solve_sat_with(g, &sat())
 }
 
 /// Cost of the selected subgraph reachable from the roots. The `Sat` solver
 /// must match this, not just `assignment_cost`: a model may otherwise select
 /// extra disconnected nodes and over-report its cost.
-fn selected_reachable_cost(g: &Graph, assignment: &[bool]) -> usize {
+fn selected_reachable_cost(g: &TestGraph, assignment: &[bool]) -> usize {
     let mut seen = vec![false; g.graph.node_count()];
     let mut stack = g.roots.clone();
     let mut cost = 0;
@@ -74,11 +182,15 @@ fn selected_reachable_cost(g: &Graph, assignment: &[bool]) -> usize {
     cost
 }
 
-fn solve_naive(g: &mut Graph) -> Result<Solution, ExtractError> {
-    g.solve_with(&SolverConfig::Naive, None, &mut StatsSink(None))
+fn solve_naive(g: &mut TestGraph) -> Result<Solution, Error> {
+    g.solve_with(
+        &solver(Node::Atomic(AtomicAlgorithm::Naive)),
+        None,
+        &mut StatsSink(None),
+    )
 }
 
-impl ExtractError {
+impl Error {
     pub(crate) fn panic_with_graph(self, g: &Graph, assignment: &[bool]) -> ! {
         // Graph dumps are only useful for the tiny generated cases.
         if g.graph.node_count() <= 32 {
@@ -93,7 +205,7 @@ impl ExtractError {
 
 #[test]
 fn acyclic_subgraph_extraction() {
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let root = g.add_vertex(true, 1, || None);
     let a = g.add_vertex(true, 1, || None);
     let b = g.add_vertex(false, 1, || None);
@@ -108,7 +220,7 @@ fn acyclic_subgraph_extraction() {
             || vec![true, true, true, true, false] == assignment
     );
 
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let root = g.add_vertex(true, 0, || None);
     let a = g.add_vertex(false, 1, || None);
     let b = g.add_vertex(false, 1, || None);
@@ -123,7 +235,7 @@ fn acyclic_subgraph_extraction() {
     let assignment = solve(&mut g).assignment;
     assert_eq!(assignment, vec![true, true, false, true, true, true]);
 
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let root = g.add_vertex(true, 0, || None);
     let x = g.add_vertex(false, 100, || None);
     let y = g.add_vertex(true, 0, || None);
@@ -132,7 +244,7 @@ fn acyclic_subgraph_extraction() {
     let assignment = solve(&mut g).assignment;
     assert_eq!(assignment, vec![true, false, false]);
 
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let root = g.add_vertex(false, 0, || None);
     let a = g.add_vertex(true, 1, || None);
     let b = g.add_vertex(true, 0, || None);
@@ -151,7 +263,7 @@ fn acyclic_subgraph_extraction() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(i as u64);
 
         let n = rng.random_range(9..=12);
-        let mut g = Graph::default();
+        let mut g = TestGraph::default();
 
         let mut assignment = vec![false; n];
         for v in 0..n {
@@ -244,7 +356,6 @@ fn acyclic_subgraph_extraction() {
             }
         }
 
-        g.collect_usage();
         let naive = match solve_naive(&mut g) {
             Ok(solution) => solution,
             Err(error) => error.panic_with_graph(&g, &assignment),
@@ -291,7 +402,7 @@ fn acyclic_subgraph_extraction() {
                     naive.cost
                 );
             }
-            Err(ExtractError::Unsolved) => {}
+            Err(Error::NotFound) => {}
             Err(error) => error.panic_with_graph(&g, &assignment),
         }
     });
@@ -301,7 +412,7 @@ fn acyclic_subgraph_extraction() {
 
 #[test]
 fn solver_config_and_stats() {
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let root = g.add_vertex(true, 0, || None);
     let a = g.add_vertex(true, 1, || None);
     let b = g.add_vertex(true, 2, || None);
@@ -329,20 +440,20 @@ fn solver_config_and_stats() {
     let failure = g
         .solve_with(&maxsat(), Some(Instant::now()), &mut StatsSink(None))
         .unwrap_err();
-    assert!(matches!(failure, ExtractError::Timeout));
+    assert!(matches!(failure, Error::Timeout));
 
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let root = g.add_vertex(true, 0, || None);
     let leaf = g.add_vertex(false, 1, || None);
     g.set_roots([root]);
     g.add_edges(root, [leaf]);
     let failure = solve_naive(&mut g).unwrap_err();
-    assert!(matches!(failure, ExtractError::Unsolvable));
+    assert!(matches!(failure, Error::Infeasible));
 }
 
 #[test]
 fn sat_zero_cost() {
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let root = g.add_vertex(false, 0, || None);
     let leaf = g.add_vertex(true, 0, || None);
     g.set_roots([root]);
@@ -354,15 +465,15 @@ fn sat_zero_cost() {
         g.solve_with(&sat(), None, &mut sink).unwrap()
     };
     assert_eq!(solved.cost, 0);
-    assert_eq!(stats.custom["sat.inc_scc.probes"], StatValue::Count(0));
-    assert_eq!(stats.custom["sat.inc_scc.optimal"], StatValue::Count(1));
+    assert_eq!(stats.custom["sat.descending.probes"], StatValue::Count(0));
+    assert_eq!(stats.custom["sat.descending.optimal"], StatValue::Count(1));
 }
 
 /// A stateful chain: `init -> store1 -> store2`, with pure constants. The
 /// chain solver must walk from the base to the root and materialize the cone.
 #[test]
 fn chain_walks_from_the_base_to_the_root() {
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let m0 = g.add_vertex(false, 0, || None);
     let m1 = g.add_vertex(false, 0, || None);
     let m2 = g.add_vertex(false, 0, || None);
@@ -404,7 +515,7 @@ fn chain_walks_from_the_base_to_the_root() {
 /// invalid; the solver must roll back and take the next consumer.
 #[test]
 fn chain_rolls_back_when_a_read_is_not_derivable() {
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let m0 = g.add_vertex(false, 0, || None);
     let m1 = g.add_vertex(false, 0, || None);
     let m2 = g.add_vertex(false, 0, || None);
@@ -446,7 +557,7 @@ fn chain_rolls_back_when_a_read_is_not_derivable() {
 /// probe declines instead of guessing.
 #[test]
 fn chain_reports_unsolved_on_a_non_chain_shape() {
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let a = g.add_vertex(false, 0, || None);
     let b = g.add_vertex(false, 0, || None);
     let root = g.add_vertex(false, 0, || None);
@@ -465,7 +576,7 @@ fn chain_reports_unsolved_on_a_non_chain_shape() {
         let mut sink = StatsSink(Some(&mut stats));
         g.solve_with(&best_effort(), None, &mut sink).unwrap_err()
     };
-    assert!(matches!(failure, ExtractError::Unsolved));
+    assert!(matches!(failure, Error::NotFound));
     assert_eq!(
         stats.custom["chain.shape"],
         StatValue::Text("unsupported".into())
@@ -475,8 +586,8 @@ fn chain_reports_unsolved_on_a_non_chain_shape() {
 /// A cycle alternative (`x_loop`) next to a direct one (`x_direct`). The ids
 /// make the cycle the first choice, so a backtracking search must move past it;
 /// the pure closure can simply pick the direct alternative.
-fn graph_with_a_cycle_alternative() -> Graph {
-    let mut g = Graph::default();
+fn graph_with_a_cycle_alternative() -> TestGraph {
+    let mut g = TestGraph::default();
     let root = g.add_vertex(false, 0, || None);
     let via_x = g.add_vertex(true, 1, || None);
     let x = g.add_vertex(false, 0, || None);
@@ -516,73 +627,11 @@ fn best_effort_avoids_a_cycle() {
     assert_eq!(first.assignment, second.assignment);
 }
 
-/// When the exact first stage fails, the combinator takes a best-effort
-/// baseline before the imprecise second stage and keeps the cheapest result.
-#[test]
-fn combinator_uses_a_best_effort_baseline() {
-    let mut g = Graph::default();
-    let root = g.add_vertex(false, 0, || None);
-    let expensive = g.add_vertex(true, 5, || None);
-    let cheap = g.add_vertex(true, 1, || None);
-    g.set_roots([root]);
-    g.add_edges(root, [expensive, cheap]);
-
-    let config = SolverConfig::Combinator(
-        CombinatorConfig::builder(SolverConfig::Naive)
-            .first_budget(Duration::ZERO)
-            .second_budget(Duration::ZERO)
-            .build(),
-    );
-    let mut stats = ExtractStats::default();
-    let solution = {
-        let mut sink = StatsSink(Some(&mut stats));
-        g.solve_with(&config, None, &mut sink).unwrap()
-    };
-    assert!(g.check_constraints(&solution.assignment));
-    assert_eq!(solution.cost, 5);
-    assert_eq!(
-        stats.custom["combinator.stage"],
-        StatValue::Text("baseline".into())
-    );
-    assert!(stats.custom.contains_key("combinator.baseline"));
-}
-
-/// The descending SAT stage starts from the known baseline instead of an
-/// unconstrained first model, and improves on it when possible.
-#[test]
-fn combinator_seeds_sat_with_the_baseline() {
-    let mut g = Graph::default();
-    let root = g.add_vertex(false, 0, || None);
-    let expensive = g.add_vertex(true, 5, || None);
-    let cheap = g.add_vertex(true, 1, || None);
-    g.set_roots([root]);
-    g.add_edges(root, [expensive, cheap]);
-
-    let config = SolverConfig::Combinator(
-        CombinatorConfig::builder(SolverConfig::Naive)
-            .first_budget(Duration::ZERO)
-            .build(),
-    );
-    let mut stats = ExtractStats::default();
-    let solution = {
-        let mut sink = StatsSink(Some(&mut stats));
-        g.solve_with(&config, None, &mut sink).unwrap()
-    };
-    assert!(g.check_constraints(&solution.assignment));
-    assert_eq!(solution.cost, 1);
-    assert_eq!(stats.custom["sat.inc_scc.seeded"], StatValue::Count(1));
-    assert_eq!(stats.custom["sat.inc_scc.seed_cost"], StatValue::Count(5));
-    assert_eq!(
-        stats.custom["combinator.stage"],
-        StatValue::Text("second".into())
-    );
-}
-
 /// A class whose only alternative loops back to the root has no acyclic
 /// production; the heuristic reports `Unsolved` after exhausting its search.
 #[test]
 fn best_effort_reports_unsolved() {
-    let mut g = Graph::default();
+    let mut g = TestGraph::default();
     let root = g.add_vertex(false, 0, || None);
     let x = g.add_vertex(false, 0, || None);
     let x_loop = g.add_vertex(true, 1, || None);
@@ -594,60 +643,45 @@ fn best_effort_reports_unsolved() {
     let failure = g
         .solve_with(&best_effort(), None, &mut StatsSink(None))
         .unwrap_err();
-    assert!(matches!(failure, ExtractError::Unsolved));
+    assert!(matches!(failure, Error::NotFound));
 }
 
-/// `FirstResult::Final` keeps the imprecise first stage's answer;
-/// `FirstResult::Fallback` always runs the optimizer and keeps the first
-/// stage's assignment only when the second stage fails.
+/// Exercise the new pipeline surface directly: a filter node followed by an
+/// atomic solver in a bundle, with the public outcome/assignment types.
 #[test]
-fn combinator_chain_seed_and_fallback() {
-    let mut g = Graph::default();
+fn pipeline_bundle_filter_and_atomic() {
+    let mut g = TestGraph::default();
     let root = g.add_vertex(false, 0, || None);
     let expensive = g.add_vertex(true, 5, || None);
     let cheap = g.add_vertex(true, 1, || None);
     g.set_roots([root]);
     g.add_edges(root, [expensive, cheap]);
 
-    let final_config = SolverConfig::Combinator(CombinatorConfig::builder(best_effort()).build());
-    assert_eq!(solve_sat_with(&mut g, &final_config).cost, 5);
-
-    let fallback_config = SolverConfig::Combinator(
-        CombinatorConfig::builder(best_effort())
-            .first_result(FirstResult::Fallback)
-            .build(),
-    );
-    let mut stats = ExtractStats::default();
-    let optimized = {
-        let mut sink = StatsSink(Some(&mut stats));
-        g.solve_with(&fallback_config, None, &mut sink).unwrap()
+    let pipeline = SolverConfig {
+        pipeline: Node::Bundle(vec![
+            Node::Filter(FilterMode::AtLeastOneOptimal),
+            Node::Atomic(AtomicAlgorithm::MaxSat(Default::default())),
+        ]),
+        timeout: None,
+        soft_timeout: None,
+        name: None,
     };
-    assert_eq!(optimized.cost, 1);
-    assert_eq!(
-        stats.custom["combinator.stage"],
-        StatValue::Text("second".into())
-    );
-
-    // A failing second stage must return the first stage's assignment instead
-    // of losing the only solution.
-    let timeout_config = SolverConfig::Combinator(
-        CombinatorConfig::builder(best_effort())
-            .second(SolverConfig::Naive)
-            .second_budget(Duration::ZERO)
-            .first_result(FirstResult::Fallback)
-            .build(),
-    );
-    let mut stats = ExtractStats::default();
-    let fallback = {
-        let mut sink = StatsSink(Some(&mut stats));
-        g.solve_with(&timeout_config, None, &mut sink).unwrap()
+    let enabled = vec![true; g.node_count()];
+    let outcome = super::pipeline::solve(
+        &g,
+        &[root],
+        enabled,
+        &pipeline,
+        None,
+        None,
+        &mut StatsSink(None),
+    )
+    .unwrap();
+    let Outcome::Optimal(assignment) = outcome else {
+        panic!("expected an optimal outcome");
     };
-    assert_eq!(fallback.cost, 5);
-    assert!(g.check_constraints(&fallback.assignment));
-    assert_eq!(
-        stats.custom["combinator.stage"],
-        StatValue::Text("first-fallback".into())
-    );
+    assert!(g.check_constraints(&assignment.selected));
+    assert_eq!(g.assignment_cost(&assignment.selected), 1);
 }
 
 /// The same abstract graph has multiple optimal assignments when built in
@@ -694,12 +728,12 @@ fn ambiguous_extraction_is_deterministic_by_construction_order() {
         attrs: &[(bool, usize)],
         edges: &[(usize, usize)],
         groups: &[&[usize]],
-    ) -> Graph {
+    ) -> TestGraph {
         let mut new_id = vec![0; attrs.len()];
         for (index, &old) in perm.iter().enumerate() {
             new_id[old] = index;
         }
-        let mut g = Graph::default();
+        let mut g = TestGraph::default();
         for &old in perm {
             let (is_all, cost) = attrs[old];
             g.add_vertex(is_all, cost, || None);
@@ -714,17 +748,17 @@ fn ambiguous_extraction_is_deterministic_by_construction_order() {
         g
     }
 
-    fn run_maxsat(g: &mut Graph) -> (usize, Vec<bool>) {
+    fn run_maxsat(g: &mut TestGraph) -> (usize, Vec<bool>) {
         let solution = g.solve_with(&maxsat(), None, &mut StatsSink(None)).unwrap();
         (solution.cost, solution.assignment)
     }
 
-    fn run_naive(g: &mut Graph) -> (usize, Vec<bool>) {
+    fn run_naive(g: &mut TestGraph) -> (usize, Vec<bool>) {
         let solution = solve_naive(g).unwrap();
         (solution.cost, solution.assignment)
     }
 
-    fn run_sat(g: &mut Graph) -> (usize, Vec<bool>) {
+    fn run_sat(g: &mut TestGraph) -> (usize, Vec<bool>) {
         let solution = solve_sat(g);
         (solution.cost, solution.assignment)
     }
@@ -766,11 +800,11 @@ fn ambiguous_extraction_is_deterministic_by_construction_order() {
 
 mod filtration {
     use super::*;
-    use crate::dag::graph::filtration::{FilterMode, filter};
+    use crate::dag::graph::{FilterMode, filter};
 
     #[test]
     fn removes_self_referential_alternative() {
-        let mut g = Graph::default();
+        let mut g = TestGraph::default();
         let class = g.add_vertex(false, 0, || None);
         let store = g.add_vertex(true, 1, || None);
         let leaf = g.add_vertex(true, 1, || None);
@@ -778,7 +812,7 @@ mod filtration {
         g.add_edges(class, [store, leaf]);
         g.add_edges(store, [class]);
 
-        let report = filter(&g, FilterMode::Validity);
+        let report = filter(&g, FilterMode::AtLeastOneSolution);
         assert!(report.disabled[store]);
         assert!(!report.disabled[leaf]);
         assert_eq!(report.removed_self, 1);
@@ -786,7 +820,7 @@ mod filtration {
 
     #[test]
     fn keeps_consumers() {
-        let mut g = Graph::default();
+        let mut g = TestGraph::default();
         let class = g.add_vertex(false, 0, || None);
         let mem = g.add_vertex(false, 0, || None);
         let store = g.add_vertex(true, 1, || None);
@@ -796,14 +830,14 @@ mod filtration {
         g.add_edges(store, [mem]);
         g.set_consumes(store, [mem]);
 
-        let report = filter(&g, FilterMode::Validity);
+        let report = filter(&g, FilterMode::AtLeastOneSolution);
         assert!(!report.disabled[store]);
         assert_eq!(report.consumers, 1);
     }
 
     #[test]
     fn subset_domination_respects_mode() {
-        let mut g = Graph::default();
+        let mut g = TestGraph::default();
         let class = g.add_vertex(false, 0, || None);
         let x = g.add_vertex(false, 0, || None);
         let expensive_leaf = g.add_vertex(true, 5, || None);
@@ -812,18 +846,18 @@ mod filtration {
         g.add_edges(class, [expensive_leaf, cheap_input]);
         g.add_edges(cheap_input, [x]);
 
-        let validity = filter(&g, FilterMode::Validity);
+        let validity = filter(&g, FilterMode::AtLeastOneSolution);
         assert!(validity.disabled[cheap_input]);
         assert!(!validity.disabled[expensive_leaf]);
 
-        let optimal = filter(&g, FilterMode::Optimal);
+        let optimal = filter(&g, FilterMode::AtLeastOneOptimal);
         assert!(!optimal.disabled[cheap_input]);
         assert!(!optimal.disabled[expensive_leaf]);
     }
 
     #[test]
     fn duplicate_inputs_keep_cheapest() {
-        let mut g = Graph::default();
+        let mut g = TestGraph::default();
         let class = g.add_vertex(false, 0, || None);
         let x = g.add_vertex(false, 0, || None);
         let expensive = g.add_vertex(true, 3, || None);
@@ -833,7 +867,10 @@ mod filtration {
         g.add_edges(expensive, [x]);
         g.add_edges(cheap, [x]);
 
-        for mode in [FilterMode::Validity, FilterMode::Optimal] {
+        for mode in [
+            FilterMode::AtLeastOneSolution,
+            FilterMode::AtLeastOneOptimal,
+        ] {
             let report = filter(&g, mode);
             assert!(!report.disabled[cheap], "{mode:?}");
             assert!(report.disabled[expensive], "{mode:?}");
@@ -843,7 +880,7 @@ mod filtration {
 
     #[test]
     fn naive_ignores_disabled_alternatives() {
-        let mut g = Graph::default();
+        let mut g = TestGraph::default();
         let class = g.add_vertex(false, 0, || None);
         let x = g.add_vertex(false, 0, || None);
         let leaf = g.add_vertex(true, 1, || None);
@@ -852,11 +889,11 @@ mod filtration {
         g.add_edges(class, [leaf, expression]);
         g.add_edges(expression, [x]);
 
-        let report = filter(&g, FilterMode::Validity);
+        let report = filter(&g, FilterMode::AtLeastOneSolution);
         assert!(report.disabled[expression]);
         g.set_disabled(report.disabled.clone());
 
-        // Without masking by `used`, the solver can satisfy `class` with the
+        // Without masking by the domain, the solver can satisfy `class` with the
         // disabled expression and report cost 0 instead of selecting the leaf.
         let solution = solve_naive(&mut g).unwrap();
         assert!(
@@ -868,7 +905,7 @@ mod filtration {
 
     #[test]
     fn reduced_model_lifts_to_full_graph() {
-        let mut g = Graph::default();
+        let mut g = TestGraph::default();
         let class = g.add_vertex(false, 0, || None);
         let x = g.add_vertex(false, 0, || None);
         let leaf = g.add_vertex(true, 5, || None);
@@ -877,7 +914,7 @@ mod filtration {
         g.add_edges(class, [leaf, input]);
         g.add_edges(input, [x]);
 
-        let report = filter(&g, FilterMode::Optimal);
+        let report = filter(&g, FilterMode::AtLeastOneOptimal);
         g.set_disabled(report.disabled.clone());
         let solution = solve_naive(&mut g).unwrap();
 
@@ -888,13 +925,12 @@ mod filtration {
             }
         }
         g.set_disabled(vec![]);
-        g.collect_usage();
         assert!(g.validate(&lifted));
     }
 
     #[test]
     fn optimal_filter_preserves_cost() {
-        let mut g = Graph::default();
+        let mut g = TestGraph::default();
         let class = g.add_vertex(false, 0, || None);
         let x = g.add_vertex(false, 0, || None);
         let expensive_leaf = g.add_vertex(true, 5, || None);
@@ -903,7 +939,7 @@ mod filtration {
         g.add_edges(class, [expensive_leaf, cheap_input]);
         g.add_edges(cheap_input, [x]);
 
-        let report = filter(&g, FilterMode::Optimal);
+        let report = filter(&g, FilterMode::AtLeastOneOptimal);
         g.set_disabled(report.disabled);
         let filtered = solve_naive(&mut g).unwrap().cost;
 

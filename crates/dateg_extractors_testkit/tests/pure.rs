@@ -3,7 +3,10 @@
 
 use std::time::Duration;
 
-use dateg_extractors::dag::{ExtractStats, SolverConfig, StatValue};
+use dateg_extractors::dag::{
+    AtomicAlgorithm, BestEffortConfig, ExtractStats, Node, SatDescendingConfig, SolverConfig,
+    StatValue,
+};
 use dateg_extractors_testkit::algorithms;
 use dateg_extractors_testkit::indexes::mem::{extract_int, extract_mem, extract_mem_with_stats};
 use dateg_extractors_testkit::memory::Memory;
@@ -30,14 +33,14 @@ fn variable_leaves_are_free() {
     let mut algorithm = algorithms::by_name("maxsat.inc_scc")
         .expect("maxsat")
         .clone();
-    algorithm.timeout = Duration::from_secs(1);
+    algorithm.config.timeout = Some(Duration::from_secs(1));
     assert_eq!(extract_int(&m, var, &algorithm).expect("var"), 0);
 }
 
 #[test]
 fn chain_handles_pure_programs_across_shapes() {
     let mut chain = algorithms::by_name("chain").expect("chain").clone();
-    chain.timeout = Duration::from_secs(5);
+    chain.config.timeout = Some(Duration::from_secs(5));
 
     for (seed, vars) in [(1, 1), (2, 4), (3, 16)] {
         let (m, root, _) = pure::build(pure_params(seed, 20, vars));
@@ -56,6 +59,40 @@ fn chain_handles_pure_programs_across_shapes() {
 }
 
 #[test]
+fn soft_timeout_stops_after_a_solution() {
+    let (m, root, _) = pure::build(pure_params(1, 20, 4));
+    let mut config = SolverConfig::new(Node::Bundle(vec![
+        Node::Label {
+            name: "first",
+            child: Box::new(Node::Atomic(AtomicAlgorithm::Chain(
+                BestEffortConfig::default(),
+            ))),
+        },
+        Node::Label {
+            name: "second",
+            child: Box::new(Node::Atomic(AtomicAlgorithm::SatDescending(
+                SatDescendingConfig::default(),
+            ))),
+        },
+    ]));
+    config.timeout = Some(Duration::from_secs(5));
+    config.soft_timeout = Some(Duration::ZERO);
+
+    let mut algorithm = algorithms::by_name("combinator")
+        .expect("combinator")
+        .clone();
+    algorithm.config = config;
+    algorithm.filtration = None;
+
+    let mut stats = ExtractStats::default();
+    let cost = extract_mem_with_stats(&m, root, &algorithm, Some(&mut stats))
+        .expect("chain should find a solution before the soft deadline");
+    assert!(cost >= 1);
+    assert!(stats.custom.contains_key("combinator.first"));
+    assert!(!stats.custom.contains_key("combinator.second"));
+}
+
+#[test]
 fn combinator_returns_a_fallback_solution() {
     // A hard pure body: the maxsat stage cannot finish in the tiny budget, so
     // the combinator must rely on the best-effort baseline (or a second-stage
@@ -64,13 +101,12 @@ fn combinator_returns_a_fallback_solution() {
     let mut algorithm = algorithms::by_name("combinator")
         .expect("combinator")
         .clone();
-    if let SolverConfig::Combinator(config) = &mut algorithm.config {
-        config.first_budget = Some(Duration::from_millis(20));
-        config.second_budget = Some(Duration::from_millis(20));
-    } else {
-        panic!("combinator does not use a combinator config");
-    }
-    algorithm.timeout = Duration::from_secs(2);
+    algorithm.config = algorithms::combinator_with_budgets(
+        0.20,
+        Some(Duration::from_millis(20)),
+        Some(Duration::from_millis(20)),
+    );
+    algorithm.config.timeout = Some(Duration::from_secs(2));
 
     let mut stats = ExtractStats::default();
     let cost = extract_mem_with_stats(&m, root, &algorithm, Some(&mut stats))

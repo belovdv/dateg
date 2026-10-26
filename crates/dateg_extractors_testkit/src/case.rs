@@ -1,4 +1,4 @@
-use dateg_extractors::dag::ExtractError;
+use dateg_extractors::dag::Error;
 
 use super::algorithms::Algorithm;
 
@@ -72,7 +72,7 @@ pub enum Expected {
     Unknown,
 }
 
-pub type RunFn = Box<dyn Fn(&Algorithm) -> Result<usize, ExtractError> + Send + Sync + 'static>;
+pub type RunFn = Box<dyn Fn(&Algorithm) -> Result<usize, Error> + Send + Sync + 'static>;
 
 pub struct Case {
     pub name: &'static str,
@@ -91,7 +91,7 @@ impl Case {
         source: SourceKind,
         complexity: Complexity,
         expected: Expected,
-        run: impl Fn(&Algorithm) -> Result<usize, ExtractError> + Send + Sync + 'static,
+        run: impl Fn(&Algorithm) -> Result<usize, Error> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name,

@@ -6,22 +6,12 @@ use petgraph::{
     visit::{IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, NodeFiltered},
 };
 
-use super::super::{Graph, VertexId};
-use crate::dag::{ExtractError, check_deadline, remaining};
+use super::super::{CycleBlocking, Graph, VertexId, View, assignment_cost, reachable};
+use crate::dag::{Error, check_deadline, remaining};
 
 pub(crate) enum Check {
     Sat(Vec<bool>),
     Unsat,
-}
-
-/// How a model with cycles is refined.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CycleBlocking {
-    /// Block every vertex of each cyclic SCC.
-    Scc,
-    /// Block one shortest cycle per cyclic SCC.
-    #[default]
-    Shortest,
 }
 
 impl CycleBlocking {
@@ -40,6 +30,10 @@ impl CycleBlocking {
 /// clauses or a cost sum) and search loop on top.
 pub(crate) struct SmtCore<'a> {
     pub(crate) g: &'a Graph,
+    pub(crate) roots: &'a [VertexId],
+    pub(crate) view: &'a View,
+    /// Root-reachable enabled vertices, derived for this encoding.
+    pub(crate) domain: Vec<bool>,
     pub(crate) ctx: Context,
     pub(crate) vars: Vec<SExpr>,
     counter: usize,
@@ -47,7 +41,12 @@ pub(crate) struct SmtCore<'a> {
 }
 
 impl<'a> SmtCore<'a> {
-    pub(crate) fn new(g: &'a Graph, deadline: Option<Instant>) -> Result<Self, ExtractError> {
+    pub(crate) fn new(
+        g: &'a Graph,
+        roots: &'a [VertexId],
+        view: &'a View,
+        deadline: Option<Instant>,
+    ) -> Result<Self, Error> {
         check_deadline(deadline)?;
         let mut builder = easy_smt::ContextBuilder::new();
         if let Ok(z3_path) = std::env::var("Z3_PATH") {
@@ -61,10 +60,14 @@ impl<'a> SmtCore<'a> {
         }
         let ctx = builder
             .build()
-            .map_err(|error| ExtractError::Other(error.into()))?;
+            .map_err(|error| Error::Custom(error.to_string()))?;
 
+        let domain = reachable(g, roots, view);
         let mut r = Self {
             g,
+            roots,
+            view,
+            domain,
             ctx,
             vars: vec![],
             counter: 0,
@@ -76,12 +79,12 @@ impl<'a> SmtCore<'a> {
             .map(|n| r.new_bool(&n.label))
             .collect();
 
-        assert!(!g.roots.is_empty());
-        for root in g.roots.iter().copied() {
+        assert!(!roots.is_empty());
+        for &root in roots {
             r.ctx.assert(r.vars[root]).unwrap();
         }
 
-        let filtered = NodeFiltered::from_fn(&g.graph, |node| g.used[node.index()]);
+        let filtered = NodeFiltered::from_fn(&g.graph, |node| r.domain[node.index()]);
         for node in filtered.node_identifiers() {
             let var = filtered.node_weight(node).unwrap();
             let requirement = if !var.is_all {
@@ -109,9 +112,9 @@ impl<'a> SmtCore<'a> {
     /// extracted index.
     pub(crate) fn assert_root_closure(&mut self) {
         let g = self.g;
-        let filtered = NodeFiltered::from_fn(&g.graph, |node| g.used[node.index()]);
+        let filtered = NodeFiltered::from_fn(&g.graph, |node| self.domain[node.index()]);
         for node in filtered.node_identifiers() {
-            if g.roots.contains(&node.index()) {
+            if self.roots.contains(&node.index()) {
                 continue;
             }
             let predecessors: Vec<_> = filtered
@@ -134,7 +137,7 @@ impl<'a> SmtCore<'a> {
             .g
             .graph
             .node_indices()
-            .filter(|&node| self.g.used[node.index()])
+            .filter(|&node| self.domain[node.index()])
             .filter_map(|node| {
                 let cost = self.g.graph[node].cost;
                 (cost > 0).then(|| {
@@ -156,17 +159,26 @@ impl<'a> SmtCore<'a> {
         total
     }
 
+    pub(crate) fn cost(&self, assignment: &[bool]) -> usize {
+        assignment_cost(self.g, self.view, assignment)
+    }
+
     /// At most one member per group, encoded with a prefix chain so a large
-    /// group does not become quadratic. Unused members are skipped: their
-    /// variables are free in this encoding and must not constrain the chain.
+    /// group does not become quadratic. Out-of-domain members are skipped:
+    /// their variables are free in this encoding and must not constrain the
+    /// chain.
     pub(crate) fn assert_conflict_groups(&mut self) {
-        for group in self.g.conflict_groups.iter() {
-            let mut members = group.iter().copied().filter(|&var| self.g.used[var]);
-            let Some(first) = members.next() else {
+        for group in self.view.all_groups(self.g) {
+            let members: Vec<_> = group
+                .iter()
+                .copied()
+                .filter(|&var| self.domain[var])
+                .collect();
+            let Some(&first) = members.first() else {
                 continue;
             };
             let mut prefix_any = self.vars[first];
-            for var in members {
+            for &var in &members[1..] {
                 self.ctx
                     .assert(self.ctx.not(self.ctx.and(self.vars[var], prefix_any)))
                     .unwrap();
@@ -196,32 +208,32 @@ impl<'a> SmtCore<'a> {
     /// z3's timeout is per check, so refresh it from the actual remaining
     /// budget before every check. Setting it once at construction lets a late
     /// check spend the whole original budget past the deadline.
-    fn refresh_timeout(&mut self) -> Result<(), ExtractError> {
+    fn refresh_timeout(&mut self) -> Result<(), Error> {
         if let Some(timeout) = remaining(self.deadline)? {
             let millis = u64::try_from(timeout.as_millis())
                 .unwrap_or(u64::MAX)
                 .max(1);
             self.ctx
                 .set_option(":timeout", self.ctx.numeral(millis))
-                .map_err(|error| ExtractError::Other(error.into()))?;
+                .map_err(|error| Error::Custom(error.to_string()))?;
         }
         Ok(())
     }
 
     /// Solver errors after the deadline are timeouts; z3 reports a canceled
     /// check as `(error "line ... canceled")` rather than `unknown`.
-    fn solver_error(&self, error: std::io::Error) -> ExtractError {
+    fn solver_error(&self, error: std::io::Error) -> Error {
         if self
             .deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
-            ExtractError::Timeout
+            Error::Timeout
         } else {
-            ExtractError::Other(error.into())
+            Error::Custom(error.to_string())
         }
     }
 
-    pub(crate) fn check(&mut self, assumption: Option<SExpr>) -> Result<Check, ExtractError> {
+    pub(crate) fn check(&mut self, assumption: Option<SExpr>) -> Result<Check, Error> {
         check_deadline(self.deadline)?;
         self.refresh_timeout()?;
 
@@ -235,12 +247,12 @@ impl<'a> SmtCore<'a> {
             easy_smt::Response::Sat => {}
             easy_smt::Response::Unsat => return Ok(Check::Unsat),
             easy_smt::Response::Unknown if self.deadline.is_some() => {
-                return Err(ExtractError::Timeout);
+                return Err(Error::Timeout);
             }
             easy_smt::Response::Unknown => {
-                return Err(ExtractError::Other(anyhow::Error::msg(
-                    "solver returned unknown without a timeout",
-                )));
+                return Err(Error::Custom(
+                    "solver returned unknown without a timeout".into(),
+                ));
             }
         }
 
@@ -248,11 +260,11 @@ impl<'a> SmtCore<'a> {
             .ctx
             .get_value(self.vars.clone())
             .map_err(|error| self.solver_error(error))?;
-        let used = values
+        let selected = values
             .into_iter()
             .enumerate()
             .map(|(n, (_, value))| {
-                if !self.g.used[n] || value == self.ctx.atoms().f {
+                if !self.domain[n] || value == self.ctx.atoms().f {
                     false
                 } else if value == self.ctx.atoms().t {
                     true
@@ -261,7 +273,7 @@ impl<'a> SmtCore<'a> {
                 }
             })
             .collect();
-        Ok(Check::Sat(used))
+        Ok(Check::Sat(selected))
     }
 
     pub(crate) fn assert_cycles(&mut self, cycles: &[Vec<VertexId>]) {
@@ -292,7 +304,7 @@ impl<'a> SmtCore<'a> {
     }
 
     pub(crate) fn block_4cycles(&mut self) -> usize {
-        let cycles = self.g.detect_cycles_4();
+        let cycles = self.g.detect_cycles_4(&self.domain);
         for cycle in &cycles {
             let cycle = self.ctx.and_many(cycle.iter().map(|&var| self.vars[var]));
             self.ctx.assert(self.ctx.not(cycle)).unwrap();
