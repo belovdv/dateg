@@ -4,6 +4,7 @@ pub mod consumption;
 pub mod failures;
 pub mod generated;
 pub mod handcrafted;
+pub mod pure;
 pub mod random_dense;
 pub mod random_memory;
 pub mod random_sparse;

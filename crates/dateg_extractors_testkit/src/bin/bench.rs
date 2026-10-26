@@ -20,7 +20,6 @@ use dateg_extractors::dag::{ExtractError, ExtractStats};
 use dateg_extractors_testkit::algorithms::{self, Algorithm};
 use dateg_extractors_testkit::bench::{BenchCase, cases};
 use dateg_extractors_testkit::indexes::mem::extract_mem_with_stats;
-use dateg_extractors_testkit::sources::generated::build;
 
 struct Args {
     algorithms: Vec<String>,
@@ -196,7 +195,7 @@ fn run_algorithm(
 
     for case in selected {
         let build_started = Instant::now();
-        let built = catch_unwind(AssertUnwindSafe(|| build(case.params)));
+        let built = catch_unwind(AssertUnwindSafe(|| case.fixture.build()));
         let build_seconds = build_started.elapsed().as_secs_f64();
         let Ok((green, root, _)) = built else {
             println!(

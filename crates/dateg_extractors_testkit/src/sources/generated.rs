@@ -6,7 +6,7 @@ use crate::case::{Case, Complexity, Expected, Purpose, SourceKind, Tier};
 use crate::indexes::mem::extract_mem;
 use crate::memory::{Int, Mem, Memory, saturate, saturate_with_assoc};
 
-const BASE_RULES: &[&str] = &["arith", "read_after_write", "mul_add"];
+pub(crate) const BASE_RULES: &[&str] = &["arith", "read_after_write", "mul_add"];
 
 /// Weight order for [`parse_weights`] and the CLI/env spec.
 pub const WEIGHT_NAMES: &[&str] = &[
@@ -168,7 +168,7 @@ pub struct Params {
 pub const DEFAULT_ADDRESSES: usize = 8;
 
 #[derive(Clone, Copy)]
-enum Op {
+pub(crate) enum Op {
     Add,
     Sub,
     Mul,
@@ -179,7 +179,7 @@ enum Op {
     Load,
 }
 
-fn pick_op(rng: &mut StdRng, w: Weights) -> Op {
+pub(crate) fn pick_op(rng: &mut StdRng, w: Weights) -> Op {
     let ops = [
         (Op::Add, w.add),
         (Op::Sub, w.sub),
@@ -202,7 +202,11 @@ fn pick_op(rng: &mut StdRng, w: Weights) -> Op {
     unreachable!()
 }
 
-fn pick_int(rng: &mut StdRng, w: Weights, ints: &[TokenOpaque<Int>]) -> TokenOpaque<Int> {
+pub(crate) fn pick_int(
+    rng: &mut StdRng,
+    w: Weights,
+    ints: &[TokenOpaque<Int>],
+) -> TokenOpaque<Int> {
     let total = w.chain + w.random;
     assert!(total > 0, "operand weights must not both be zero");
     if rng.random_range(0..total) < w.chain {

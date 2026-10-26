@@ -4,10 +4,12 @@
 //! Env:
 //! - `PROBE_SEED` (default 1)
 //! - `PROBE_STEPS` (default 4)
+//! - `PROBE_SHAPE` (`memory` | `pure`, default `memory`)
 //! - `PROBE_PROFILE` (`pure` | `memory`, default `memory`)
 //! - `PROBE_WEIGHTS` comma-separated weights overriding the profile
 //! - `PROBE_RULES` (`none` | `assoc` | `reorder` | `assoc_reorder`, default `reorder`)
 //! - `PROBE_ADDRESSES` number of constant addresses (default 8)
+//! - `PROBE_VARS` free variables in a pure shape (default 4)
 //! - `PROBE_TIMEOUT` extraction seconds (default 10)
 //! - `PROBE_ALGORITHM` solver name (default `maxsat.inc_scc`)
 //! - `PROBE_CYCLE_BLOCKING` (`scc` | `shortest`) for either solver
@@ -25,6 +27,7 @@ use dateg_extractors::dag::{CycleBlocking, ExtractError, ExtractStats, SolverCon
 use dateg_extractors_testkit::algorithms;
 use dateg_extractors_testkit::indexes::mem::{CostModel, extract_mem_with_stats, set_cost_model};
 use dateg_extractors_testkit::sources::generated::{self, Params};
+use dateg_extractors_testkit::sources::pure;
 
 fn main() {
     if std::env::var("PROBE_COST_MODEL").as_deref() == Ok("weighted") {
@@ -33,6 +36,8 @@ fn main() {
     let seed = env_u64("PROBE_SEED", 1);
     let steps = env_usize("PROBE_STEPS", 4);
     let profile = std::env::var("PROBE_PROFILE").unwrap_or_else(|_| "memory".into());
+    let shape = std::env::var("PROBE_SHAPE").unwrap_or_else(|_| "memory".into());
+    let vars = env_usize("PROBE_VARS", 4);
     let weights = match std::env::var("PROBE_WEIGHTS") {
         Ok(spec) => generated::parse_weights(&spec),
         Err(_) => generated::weights_by_name(&profile)
@@ -58,16 +63,28 @@ fn main() {
         addresses,
     };
     let build_started = Instant::now();
-    let built = catch_unwind(AssertUnwindSafe(|| generated::build(params)));
+    let built = catch_unwind(AssertUnwindSafe(|| match shape.as_str() {
+        "memory" => generated::build(params),
+        "pure" => pure::build(pure::Params {
+            seed,
+            steps,
+            vars,
+            weights,
+            optional_rules: rules,
+        }),
+        other => panic!("unknown PROBE_SHAPE {other:?}"),
+    }));
     let build_time = build_started.elapsed();
 
     let mut fields = vec![
         format!("seed={seed}"),
         format!("steps={steps}"),
+        format!("shape={shape}"),
         format!("profile={profile}"),
         format!("rules={rules_name}"),
         format!("weights={weights}"),
         format!("addresses={addresses}"),
+        format!("vars={vars}"),
         format!("build_s={:.6}", build_time.as_secs_f64()),
     ];
     let Ok((m, root, size)) = built else {

@@ -7,11 +7,30 @@
 //!
 //! These cases are too slow for the test matrix. Use the `bench` binary.
 
-use crate::sources::generated::{DEFAULT_ADDRESSES, Params, memory_weights, rules_by_name};
+use dateg::TokenOpaque;
 
+use crate::memory::{Mem, Memory};
+use crate::sources::generated::{
+    DEFAULT_ADDRESSES, Params, memory_weights, pure_weights, rules_by_name,
+};
+use crate::sources::pure;
+
+pub enum Fixture {
+    Memory(Params),
+    Pure(pure::Params),
+}
+
+impl Fixture {
+    pub fn build(&self) -> (Memory, TokenOpaque<Mem>, usize) {
+        match self {
+            Self::Memory(params) => crate::sources::generated::build(*params),
+            Self::Pure(params) => pure::build(*params),
+        }
+    }
+}
 pub struct BenchCase {
     pub name: &'static str,
-    pub params: Params,
+    pub fixture: Fixture,
     /// `None` for the top rungs: the reference did not finish in budget, so the
     /// optimum is unknown and the bench can only check that a solution is valid.
     pub expected_cost: Option<usize>,
@@ -34,13 +53,13 @@ fn case(
 ) -> BenchCase {
     BenchCase {
         name,
-        params: Params {
+        fixture: Fixture::Memory(Params {
             seed,
             steps,
             weights: memory_weights(),
             optional_rules: rules_by_name(rules),
             addresses,
-        },
+        }),
         expected_cost: Some(expected_cost),
         reference_seconds,
         reference_exact: true,
@@ -53,13 +72,13 @@ fn case(
 fn coverage_case(name: &'static str, seed: u64, steps: usize, rules: &'static str) -> BenchCase {
     BenchCase {
         name,
-        params: Params {
+        fixture: Fixture::Memory(Params {
             seed,
             steps,
             weights: memory_weights(),
             optional_rules: rules_by_name(rules),
             addresses: DEFAULT_ADDRESSES,
-        },
+        }),
         expected_cost: None,
         reference_seconds: f64::INFINITY,
         reference_exact: false,
@@ -79,16 +98,69 @@ fn open_case(
 ) -> BenchCase {
     BenchCase {
         name,
-        params: Params {
+        fixture: Fixture::Memory(Params {
             seed,
             steps,
             weights: memory_weights(),
             optional_rules: rules_by_name(rules),
             addresses,
-        },
+        }),
         expected_cost: None,
         reference_seconds,
         reference_exact: false,
+    }
+}
+
+/// A pure rung whose optimum the reference did not reach in the extraction
+/// budget. The graph still builds under the plain saturation guard, so the
+/// bench checks solution validity only.
+fn pure_open_case(
+    name: &'static str,
+    seed: u64,
+    steps: usize,
+    vars: usize,
+    rules: &'static str,
+    reference_seconds: f64,
+) -> BenchCase {
+    BenchCase {
+        name,
+        fixture: Fixture::Pure(pure::Params {
+            seed,
+            steps,
+            vars,
+            weights: pure_weights(),
+            optional_rules: rules_by_name(rules),
+        }),
+        expected_cost: None,
+        reference_seconds,
+        reference_exact: false,
+    }
+}
+
+/// A measured pure program: several free variables, a pure body, and one final
+/// store. The step count is chosen experimentally; pure + `assoc` does not
+/// converge for every seed, so these parameters are the seeds that build.
+fn pure_case(
+    name: &'static str,
+    seed: u64,
+    steps: usize,
+    vars: usize,
+    rules: &'static str,
+    expected_cost: usize,
+    reference_seconds: f64,
+) -> BenchCase {
+    BenchCase {
+        name,
+        fixture: Fixture::Pure(pure::Params {
+            seed,
+            steps,
+            vars,
+            weights: pure_weights(),
+            optional_rules: rules_by_name(rules),
+        }),
+        expected_cost: Some(expected_cost),
+        reference_seconds,
+        reference_exact: true,
     }
 }
 
@@ -98,6 +170,11 @@ fn open_case(
 /// neighbours are correlated. The set deliberately spans several seeds.
 pub fn cases() -> Vec<BenchCase> {
     vec![
+        // Pure programs: several free variable leaves, a pure body, and exactly
+        // one final store. Steps are chosen experimentally; assoc seeds must
+        // converge under the plain guard. Includes both assoc and no-assoc
+        // rungs, with no row budget.
+        pure_case("pure_s9_100_1k", 9, 100, 4, "assoc", 3, 0.07),
         case(
             "reorder_s1_132",
             1,
@@ -107,6 +184,7 @@ pub fn cases() -> Vec<BenchCase> {
             100,
             3.01,
         ),
+        pure_case("pure_s10_3900_8k_noassoc", 10, 3900, 4, "none", 459, 4.19),
         case(
             "reorder_s17_154",
             17,
@@ -125,6 +203,7 @@ pub fn cases() -> Vec<BenchCase> {
             122,
             10.32,
         ),
+        pure_case("pure_s38_160_2k", 38, 160, 4, "assoc", 37, 14.87),
         case(
             "reorder_s17_133",
             17,
@@ -134,6 +213,7 @@ pub fn cases() -> Vec<BenchCase> {
             110,
             15.08,
         ),
+        pure_case("pure_s21_200_3k", 21, 200, 4, "assoc", 35, 19.90),
         case(
             "reorder_s5_138",
             5,
@@ -197,6 +277,9 @@ pub fn cases() -> Vec<BenchCase> {
             111,
             38.01,
         ),
+        // Pure open rung: 31k rows, MaxSAT timed out at 60 s; chain returns a
+        // valid 96 in ~34 ms.
+        pure_open_case("pure_s74_900_31k", 74, 900, 4, "assoc", 60.0),
         case(
             "reorder_s17_158",
             17,

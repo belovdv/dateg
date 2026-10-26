@@ -1,0 +1,88 @@
+//! Pure programs with several free inputs and one trailing store. These guard
+//! the bench fixture shape and the best-effort fallback used for open rungs.
+
+use std::time::Duration;
+
+use dateg_extractors::dag::{ExtractStats, SolverConfig, StatValue};
+use dateg_extractors_testkit::algorithms;
+use dateg_extractors_testkit::indexes::mem::{extract_int, extract_mem, extract_mem_with_stats};
+use dateg_extractors_testkit::memory::Memory;
+use dateg_extractors_testkit::sources::generated::{pure_weights, rules_by_name};
+use dateg_extractors_testkit::sources::pure;
+
+fn pure_params(seed: u64, steps: usize, vars: usize) -> pure::Params {
+    pure::Params {
+        seed,
+        steps,
+        vars,
+        weights: pure_weights(),
+        optional_rules: rules_by_name("assoc"),
+    }
+}
+
+#[test]
+fn variable_leaves_are_free() {
+    let mut m = Memory::default();
+    let table = m.var;
+    let name = m.add_primitive_value("x".to_string());
+    let var = m.row_add(table, (name,));
+
+    let mut algorithm = algorithms::by_name("maxsat.inc_scc")
+        .expect("maxsat")
+        .clone();
+    algorithm.timeout = Duration::from_secs(1);
+    assert_eq!(extract_int(&m, var, &algorithm).expect("var"), 0);
+}
+
+#[test]
+fn chain_handles_pure_programs_across_shapes() {
+    let mut chain = algorithms::by_name("chain").expect("chain").clone();
+    chain.timeout = Duration::from_secs(5);
+
+    for (seed, vars) in [(1, 1), (2, 4), (3, 16)] {
+        let (m, root, _) = pure::build(pure_params(seed, 20, vars));
+        let cost = extract_mem(&m, root, &chain)
+            .unwrap_or_else(|error| panic!("seed {seed}, vars {vars}: {error}"));
+        assert!(cost >= 1);
+    }
+
+    for seed in 1..=8 {
+        let (m, root, _) = pure::build(pure_params(seed, 20, 4));
+        extract_mem(&m, root, &chain).unwrap_or_else(|error| panic!("seed {seed}: {error}"));
+    }
+
+    let (m, root, _) = pure::build(pure_params(38, 140, 4));
+    assert!(extract_mem(&m, root, &chain).is_ok());
+}
+
+#[test]
+fn combinator_returns_a_fallback_solution() {
+    // A hard pure body: the maxsat stage cannot finish in the tiny budget, so
+    // the combinator must rely on the best-effort baseline (or a second-stage
+    // solution seeded from it) instead of failing.
+    let (m, root, _) = pure::build(pure_params(38, 160, 4));
+    let mut algorithm = algorithms::by_name("combinator")
+        .expect("combinator")
+        .clone();
+    if let SolverConfig::Combinator(config) = &mut algorithm.config {
+        config.first_budget = Some(Duration::from_millis(20));
+        config.second_budget = Some(Duration::from_millis(20));
+    } else {
+        panic!("combinator does not use a combinator config");
+    }
+    algorithm.timeout = Duration::from_secs(2);
+
+    let mut stats = ExtractStats::default();
+    let cost = extract_mem_with_stats(&m, root, &algorithm, Some(&mut stats))
+        .expect("combinator fallback");
+    assert!(cost >= 1);
+    assert!(
+        matches!(
+            stats.custom.get("combinator.stage"),
+            Some(StatValue::Text(stage))
+                if stage == "baseline" || stage == "second" || stage == "first-fallback"
+        ),
+        "expected a fallback stage, got {:?}",
+        stats.custom.get("combinator.stage")
+    );
+}

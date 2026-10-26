@@ -47,7 +47,7 @@ index_dag!(MemIndex
     )
     int: IntEnum (datatype Int
         MCst (usize) { |_, _| Some(1) }
-        MVar (String) { |_, _| Some(1) }
+        MVar (String) { |_, _| Some(0) }
         MLoad (Mem Int) { |_, _| Some(cost(1, 5)) }
         MOne () { |_, _| Some(1) }
         MInc (Int) { |_, _| Some(1) }
@@ -101,9 +101,10 @@ fn validate_node(
                 .get(&token)
                 .unwrap_or_else(|| panic!("missing int entry for {token:?}"));
             match value {
-                IntEnum::MCst(_) | IntEnum::MVar(_) | IntEnum::MOne() => {
+                IntEnum::MCst(_) | IntEnum::MOne() => {
                     total += 1;
                 }
+                IntEnum::MVar(_) => {}
                 IntEnum::MLoad(mem, addr) => {
                     total += cost(1, 5);
                     total += validate_node(index, Node::Mem(*mem), visiting, done);
