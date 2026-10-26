@@ -57,14 +57,13 @@ fn chain_solves_the_memory_shape_and_the_combinator_optimizes() {
     let combined = extract_mem_with_stats(
         &green,
         root,
-        &algorithm("combinator.chain"),
+        &algorithm("combinator.thorough"),
         Some(&mut stats),
     )
     .unwrap();
     assert_eq!(combined, optimal);
-    // The chain may already hit the optimum, in which case the tie keeps the
-    // first stage; the second stage always runs and records its duration.
-    assert!(stats.custom.contains_key("combinator.second"));
+    // `thorough` records each stage that ran; MaxSAT is the exact baseline.
+    assert!(stats.custom.contains_key("combinator.baseline"));
 }
 
 #[test]

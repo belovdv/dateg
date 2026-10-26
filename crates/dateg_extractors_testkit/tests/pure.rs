@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use dateg_extractors::dag::{
     AtomicAlgorithm, BestEffortConfig, ExtractStats, Node, SatDescendingConfig, SolverConfig,
-    StatValue,
+    StatValue, TimeoutPolicy,
 };
 use dateg_extractors_testkit::algorithms;
 use dateg_extractors_testkit::indexes::mem::{extract_int, extract_mem, extract_mem_with_stats};
@@ -78,8 +78,8 @@ fn soft_timeout_stops_after_a_solution() {
     config.timeout = Some(Duration::from_secs(5));
     config.soft_timeout = Some(Duration::ZERO);
 
-    let mut algorithm = algorithms::by_name("combinator")
-        .expect("combinator")
+    let mut algorithm = algorithms::by_name("combinator.thorough")
+        .expect("combinator.thorough")
         .clone();
     algorithm.config = config;
     algorithm.filtration = None;
@@ -98,15 +98,42 @@ fn combinator_returns_a_fallback_solution() {
     // the combinator must rely on the best-effort baseline (or a second-stage
     // solution seeded from it) instead of failing.
     let (m, root, _) = pure::build(pure_params(38, 160, 4));
-    let mut algorithm = algorithms::by_name("combinator")
-        .expect("combinator")
+    let first = Node::Label {
+        name: "first",
+        child: Box::new(Node::Timeout {
+            policy: TimeoutPolicy::Time(Duration::from_millis(20)),
+            child: Box::new(Node::Atomic(AtomicAlgorithm::MaxSat(Default::default()))),
+        }),
+    };
+    let baseline = Node::Label {
+        name: "baseline",
+        child: Box::new(Node::Atomic(AtomicAlgorithm::Chain(
+            BestEffortConfig::default(),
+        ))),
+    };
+    let second = Node::Label {
+        name: "second",
+        child: Box::new(Node::Timeout {
+            policy: TimeoutPolicy::Time(Duration::from_millis(20)),
+            child: Box::new(Node::Atomic(AtomicAlgorithm::SatDescending(
+                SatDescendingConfig::default(),
+            ))),
+        }),
+    };
+    let mut config = SolverConfig::new(Node::Bundle(vec![
+        Node::OnFailure {
+            primary: Box::new(first),
+            fallback: Box::new(baseline),
+        },
+        second,
+    ]));
+    config.timeout = Some(Duration::from_secs(2));
+
+    let mut algorithm = algorithms::by_name("combinator.thorough")
+        .expect("combinator.thorough")
         .clone();
-    algorithm.config = algorithms::combinator_with_budgets(
-        0.20,
-        Some(Duration::from_millis(20)),
-        Some(Duration::from_millis(20)),
-    );
-    algorithm.config.timeout = Some(Duration::from_secs(2));
+    algorithm.config = config;
+    algorithm.filtration = None;
 
     let mut stats = ExtractStats::default();
     let cost = extract_mem_with_stats(&m, root, &algorithm, Some(&mut stats))

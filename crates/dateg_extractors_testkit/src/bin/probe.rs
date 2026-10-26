@@ -100,19 +100,6 @@ fn main() {
     )
     .expect("algorithm")
     .clone();
-    let first_budget = std::env::var("PROBE_FIRST_BUDGET_MS")
-        .ok()
-        .map(|value| Duration::from_millis(value.parse().expect("PROBE_FIRST_BUDGET_MS")));
-    let first_share = std::env::var("PROBE_FIRST_SHARE")
-        .ok()
-        .map(|value| value.parse().expect("PROBE_FIRST_SHARE"));
-    if first_budget.is_some() || first_share.is_some() {
-        if let Some(config) =
-            algorithms::with_legacy_budgets(&algorithm.name, first_share, first_budget, None)
-        {
-            algorithm.config = config;
-        }
-    }
     algorithm.config.timeout = Some(if metrics_only {
         Duration::ZERO
     } else {

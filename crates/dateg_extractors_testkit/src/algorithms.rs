@@ -2,7 +2,7 @@ use std::{sync::LazyLock, time::Duration};
 
 use dateg_extractors::dag::{
     AtomicAlgorithm, BestEffortConfig, ExtractOptions, FilterMode, Node, SatDescendingConfig,
-    SolverConfig, TimeoutPolicy,
+    SolverConfig,
 };
 
 use crate::case::{Complexity, Tier};
@@ -75,120 +75,6 @@ fn chain() -> SolverConfig {
     atomic(AtomicAlgorithm::Chain(BestEffortConfig::default()))
 }
 
-fn labelled(name: &'static str, node: Node) -> Node {
-    Node::Label {
-        name,
-        child: Box::new(node),
-    }
-}
-
-fn timeout(policy: TimeoutPolicy, node: Node) -> Node {
-    Node::Timeout {
-        policy,
-        child: Box::new(node),
-    }
-}
-
-/// Temporary reconstruction of the old two-stage combinator.
-///
-/// `final_result` picks the old final behavior (stop after a successful first
-/// stage) or fallback behavior (always run the second stage).
-fn combinator_tree(
-    first: AtomicAlgorithm,
-    first_policy: TimeoutPolicy,
-    second: AtomicAlgorithm,
-    second_policy: TimeoutPolicy,
-    final_result: bool,
-) -> SolverConfig {
-    let first = labelled("first", timeout(first_policy, Node::Atomic(first)));
-    let second = labelled("second", timeout(second_policy, Node::Atomic(second)));
-    let baseline = labelled(
-        "baseline",
-        Node::Atomic(AtomicAlgorithm::Chain(BestEffortConfig::default())),
-    );
-    let pipeline = if final_result {
-        Node::Try {
-            primary: Box::new(first),
-            fallback: Box::new(Node::Bundle(vec![baseline, second])),
-        }
-    } else {
-        Node::Bundle(vec![
-            Node::OnFailure {
-                primary: Box::new(first),
-                fallback: Box::new(baseline),
-            },
-            second,
-        ])
-    };
-    let mut config = SolverConfig::new(pipeline);
-    config.name = Some("combinator");
-    config
-}
-
-/// Temporary combinator helper with explicit budgets; used by `probe`/tests.
-pub fn combinator_with_budgets(
-    first_share: f64,
-    first_budget: Option<Duration>,
-    second_budget: Option<Duration>,
-) -> SolverConfig {
-    let first_policy = match first_budget {
-        Some(cap) => TimeoutPolicy::FractionCapped {
-            fraction: first_share,
-            cap,
-        },
-        None => TimeoutPolicy::Fraction(first_share),
-    };
-    let second_policy = match second_budget {
-        Some(cap) => TimeoutPolicy::Time(cap),
-        None => TimeoutPolicy::Remaining,
-    };
-    combinator_tree(
-        AtomicAlgorithm::MaxSat(Default::default()),
-        first_policy,
-        AtomicAlgorithm::SatDescending(Default::default()),
-        second_policy,
-        true,
-    )
-}
-
-/// Rebuild a legacy combinator entry with probe overrides; `None` for a
-/// non-combinator algorithm.
-pub fn with_legacy_budgets(
-    name: &str,
-    first_share: Option<f64>,
-    first_budget: Option<Duration>,
-    second_budget: Option<Duration>,
-) -> Option<SolverConfig> {
-    if !name.starts_with("combinator") {
-        return None;
-    }
-    if name == "combinator.chain" {
-        let first_policy = match first_budget.or(Some(Duration::from_secs(2))) {
-            Some(cap) => TimeoutPolicy::FractionCapped {
-                fraction: first_share.unwrap_or(0.05),
-                cap,
-            },
-            None => TimeoutPolicy::Fraction(first_share.unwrap_or(0.05)),
-        };
-        let second_policy = match second_budget {
-            Some(cap) => TimeoutPolicy::Time(cap),
-            None => TimeoutPolicy::Remaining,
-        };
-        return Some(combinator_tree(
-            AtomicAlgorithm::Chain(BestEffortConfig::default()),
-            first_policy,
-            AtomicAlgorithm::MaxSat(Default::default()),
-            second_policy,
-            false,
-        ));
-    }
-    Some(combinator_with_budgets(
-        first_share.unwrap_or(0.20),
-        first_budget,
-        second_budget,
-    ))
-}
-
 /// Measured on a chain: complexity 14 ~0.4 s, 16 ~6 s, 17 hits the 10 s
 /// timeout. This is shape-dependent; refine with timeout data.
 fn naive_capacity(complexity: Complexity) -> Fit {
@@ -253,39 +139,6 @@ pub static ALGORITHMS: LazyLock<Vec<Algorithm>> = LazyLock::new(|| {
             name: "chain",
             config: chain(),
             filtration: None,
-            capacity: sat_capacity,
-            oracles: &[],
-            bench_only: true,
-        },
-        Algorithm {
-            name: "combinator.chain",
-            config: combinator_tree(
-                AtomicAlgorithm::Chain(BestEffortConfig::default()),
-                TimeoutPolicy::FractionCapped {
-                    fraction: 0.05,
-                    cap: Duration::from_secs(2),
-                },
-                AtomicAlgorithm::MaxSat(Default::default()),
-                TimeoutPolicy::Remaining,
-                false,
-            ),
-            filtration: Some(FilterMode::AtLeastOneSolution),
-            capacity: sat_capacity,
-            oracles: &[],
-            bench_only: true,
-        },
-        Algorithm {
-            name: "combinator",
-            config: combinator_with_budgets(0.20, None, None),
-            filtration: Some(FilterMode::AtLeastOneSolution),
-            capacity: sat_capacity,
-            oracles: &[],
-            bench_only: true,
-        },
-        Algorithm {
-            name: "combinator.optimal",
-            config: combinator_with_budgets(0.20, None, None),
-            filtration: Some(FilterMode::AtLeastOneOptimal),
             capacity: sat_capacity,
             oracles: &[],
             bench_only: true,
@@ -364,7 +217,7 @@ mod tests {
         assert_eq!(matching("maxsat.inc_scc").len(), 1);
         assert_eq!(matching("sat.*").len(), 2);
         assert!(matching("sat.*").iter().all(|a| a.name.starts_with("sat.")));
-        assert_eq!(matching("combinator*").len(), 4);
+        assert_eq!(matching("combinator*").len(), 1);
         assert_eq!(matching("chain").len(), 1);
         assert!(matching("no.such.algorithm").is_empty());
     }
