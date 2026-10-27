@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     Assignment, AtomicAlgorithm, Bounds, FilterMode, Graph, Node, Outcome, SolverConfig,
-    TimeoutPolicy, VertexId, View, assignment_cost, best_effort, filter_with_enabled,
+    TimeoutPolicy, VertexId, View, assignment_cost, best_effort, filter_with_roots,
     max_sat_inc_scc, naive, record_metrics, sat_descending,
 };
 use crate::dag::{Error, StatsSink};
@@ -297,7 +297,7 @@ impl Context<'_, '_> {
         match node {
             Node::Atomic(algorithm) => self.solve_leaf(algorithm, run),
             Node::Filter(mode) => {
-                self.apply_filter(*mode);
+                self.apply_filter(*mode, run.deadline());
                 Status::Empty
             }
             Node::Timeout { policy, child } => {
@@ -419,8 +419,8 @@ impl Context<'_, '_> {
             + self.view.extra_groups.len()
     }
 
-    fn apply_filter(&mut self, mode: FilterMode) {
-        let report = filter_with_enabled(self.graph, mode, &self.view.enabled);
+    fn apply_filter(&mut self, mode: FilterMode, deadline: Option<Instant>) {
+        let report = filter_with_roots(self.graph, mode, &self.view.enabled, self.roots, deadline);
         let disabled = report.disabled.iter().filter(|&&disabled| disabled).count() as u64;
         for (index, &disabled) in report.disabled.iter().enumerate() {
             if disabled && self.view.enabled[index] {
@@ -433,8 +433,34 @@ impl Context<'_, '_> {
             match mode {
                 FilterMode::AtLeastOneOptimal => "optimal",
                 FilterMode::AtLeastOneSolution => "validity",
+                FilterMode::ComponentOptimal => "component",
             },
         );
+        if let Some(component) = &report.component {
+            self.stats
+                .count("component_filter.components", component.components as u64);
+            self.stats
+                .count("component_filter.vertices", component.vertices as u64);
+            self.stats
+                .count("component_filter.inputs", component.inputs as u64);
+            self.stats
+                .count("component_filter.outputs", component.outputs as u64);
+            self.stats
+                .count("component_filter.removed_a", component.removed_a as u64);
+            self.stats
+                .count("component_filter.removed_b", component.removed_b as u64);
+            self.stats.count(
+                "component_filter.removed_cascade",
+                component.removed_cascade as u64,
+            );
+            self.stats
+                .count("component_filter.rounds", component.rounds as u64);
+            self.stats
+                .duration("component_filter.analyze", component.duration);
+            if component.timed_out {
+                self.stats.count("component_filter.timed_out", 1);
+            }
+        }
         self.view.refresh(self.graph);
     }
 }

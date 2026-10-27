@@ -14,6 +14,8 @@ use super::StatsSink;
 
 mod best_effort;
 mod common;
+mod component_filter;
+mod components;
 mod config;
 mod domination;
 mod filtration;
@@ -25,7 +27,9 @@ mod sat_descending;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use filtration::{filter, filter_with_enabled};
+#[cfg(test)]
+pub(crate) use filtration::filter;
+pub(crate) use filtration::filter_with_roots;
 use interface::Vertex;
 pub use interface::{
     Assignment, AtomicAlgorithm, BestEffortAlgorithm, BestEffortConfig, Bounds, CycleBlocking,

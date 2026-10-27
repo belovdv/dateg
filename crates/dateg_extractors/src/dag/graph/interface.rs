@@ -107,6 +107,11 @@ pub enum FilterMode {
     AtLeastOneOptimal,
     /// Remove dominated alternatives regardless of cost; preserve existence.
     AtLeastOneSolution,
+    /// Structural rules plus the top-down component filter. Preserves at
+    /// least one optimum on the pure components it analyzes. The private-cone
+    /// rule is restricted to components without opaque inputs; components with
+    /// `I != {}` get the cheaper alternative and cascade rules.
+    ComponentOptimal,
     // The full four-level contract also has:
     // - `AllOptimal`: preserve every optimal solution.
     // - `BestEffort`: no guarantee.

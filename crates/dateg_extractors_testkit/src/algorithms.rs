@@ -2,7 +2,7 @@ use std::{sync::LazyLock, time::Duration};
 
 use dateg_extractors::dag::{
     AtomicAlgorithm, BestEffortConfig, ExtractOptions, FilterMode, Node, SatDescendingConfig,
-    SolverConfig,
+    SolverConfig, TimeoutPolicy,
 };
 
 use crate::case::{Complexity, Tier};
@@ -75,6 +75,32 @@ fn chain() -> SolverConfig {
     atomic(AtomicAlgorithm::Chain(BestEffortConfig::default()))
 }
 
+fn component_filter() -> Node {
+    Node::Timeout {
+        policy: TimeoutPolicy::FractionCapped {
+            fraction: 0.5,
+            cap: Duration::from_secs(5),
+        },
+        child: Box::new(Node::Filter(FilterMode::ComponentOptimal)),
+    }
+}
+
+fn maxsat_component() -> SolverConfig {
+    SolverConfig::new(Node::Bundle(vec![
+        Node::Label {
+            name: "first",
+            child: Box::new(Node::Atomic(AtomicAlgorithm::Chain(
+                BestEffortConfig::default(),
+            ))),
+        },
+        component_filter(),
+        Node::Label {
+            name: "second",
+            child: Box::new(Node::Atomic(AtomicAlgorithm::MaxSat(Default::default()))),
+        },
+    ]))
+}
+
 /// Measured on a chain: complexity 14 ~0.4 s, 16 ~6 s, 17 hits the 10 s
 /// timeout. This is shape-dependent; refine with timeout data.
 fn naive_capacity(complexity: Complexity) -> Fit {
@@ -142,6 +168,14 @@ pub static ALGORITHMS: LazyLock<Vec<Algorithm>> = LazyLock::new(|| {
             capacity: sat_capacity,
             oracles: &[],
             bench_only: true,
+        },
+        Algorithm {
+            name: "combinator.component",
+            config: maxsat_component(),
+            filtration: None,
+            capacity: sat_capacity,
+            oracles: &["maxsat.inc_scc"],
+            bench_only: false,
         },
         Algorithm {
             name: "combinator.thorough",
@@ -217,7 +251,7 @@ mod tests {
         assert_eq!(matching("maxsat.inc_scc").len(), 1);
         assert_eq!(matching("sat.*").len(), 2);
         assert!(matching("sat.*").iter().all(|a| a.name.starts_with("sat.")));
-        assert_eq!(matching("combinator*").len(), 1);
+        assert_eq!(matching("combinator*").len(), 2);
         assert_eq!(matching("chain").len(), 1);
         assert!(matching("no.such.algorithm").is_empty());
     }

@@ -16,6 +16,8 @@
 //! Consumers are never removed by the last two rules, so the consumption
 //! assignment space is preserved for later phases.
 
+use std::time::Instant;
+
 use petgraph::{Direction::Outgoing, graph::NodeIndex};
 
 use super::{FilterMode, Graph, VertexId, domination};
@@ -28,20 +30,47 @@ pub(crate) struct FilterReport {
     pub(crate) removed_dominated: u64,
     pub(crate) alternatives: u64,
     pub(crate) consumers: u64,
+    pub(crate) component: Option<super::component_filter::Report>,
 }
 
+#[cfg(test)]
 pub(crate) fn filter(graph: &Graph, mode: FilterMode) -> FilterReport {
-    let enabled = vec![true; graph.graph.node_count()];
-    filter_with_enabled(graph, mode, &enabled)
+    filter_with_roots(
+        graph,
+        mode,
+        &vec![true; graph.graph.node_count()],
+        &[],
+        None,
+    )
 }
 
-/// Filter relative to an existing view. Already disabled constructors are not
-/// candidates and cannot act as dominators.
-pub(crate) fn filter_with_enabled(
+pub(crate) fn filter_with_roots(
     graph: &Graph,
     mode: FilterMode,
     enabled: &[bool],
+    roots: &[VertexId],
+    deadline: Option<Instant>,
 ) -> FilterReport {
+    if mode == FilterMode::ComponentOptimal {
+        let mut enabled = enabled.to_vec();
+        let mut report = structural_filter(graph, FilterMode::AtLeastOneOptimal, &enabled);
+        for (index, &disabled) in report.disabled.iter().enumerate() {
+            if disabled {
+                enabled[index] = false;
+            }
+        }
+        let filtered =
+            super::component_filter::filter(graph, roots, &enabled, deadline, Default::default());
+        for (index, &disabled) in filtered.disabled.iter().enumerate() {
+            report.disabled[index] |= disabled;
+        }
+        report.component = Some(filtered);
+        return report;
+    }
+    structural_filter(graph, mode, enabled)
+}
+
+fn structural_filter(graph: &Graph, mode: FilterMode, enabled: &[bool]) -> FilterReport {
     let count = graph.graph.node_count();
     let mut disabled = vec![false; count];
     let mut removed_self = 0;
@@ -124,5 +153,6 @@ pub(crate) fn filter_with_enabled(
         removed_dominated,
         alternatives,
         consumers,
+        component: None,
     }
 }

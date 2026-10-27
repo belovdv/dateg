@@ -226,9 +226,11 @@ impl<Index: Default> Extractor<Index> {
             .get(&root.into_egglog())
             .ok_or(Error::RootMissing)?;
         let mut base_enabled = vec![true; self.dag.node_count()];
+
         if let Some(mode) = options.filtration {
             let started = Instant::now();
-            let report = graph::filter(&self.dag, mode);
+            let report =
+                graph::filter_with_roots(&self.dag, mode, &base_enabled, &[root_vertex], deadline);
             stats.duration("filtration.analyze", started.elapsed());
             let disabled = report.disabled.iter().filter(|&&flag| flag).count() as u64;
             stats.text(
@@ -236,6 +238,7 @@ impl<Index: Default> Extractor<Index> {
                 match mode {
                     FilterMode::AtLeastOneSolution => "validity",
                     FilterMode::AtLeastOneOptimal => "optimal",
+                    FilterMode::ComponentOptimal => "component",
                 },
             );
             stats.count("filtration.alternatives", report.alternatives);
@@ -244,6 +247,19 @@ impl<Index: Default> Extractor<Index> {
             stats.count("filtration.removed_duplicate", report.removed_duplicate);
             stats.count("filtration.removed_dominated", report.removed_dominated);
             stats.count("filtration.disabled", disabled);
+            if let Some(component) = &report.component {
+                stats.count("filtration.component.removed_a", component.removed_a as u64);
+                stats.count("filtration.component.removed_b", component.removed_b as u64);
+                stats.count(
+                    "filtration.component.removed_cascade",
+                    component.removed_cascade as u64,
+                );
+                stats.count("filtration.component.rounds", component.rounds as u64);
+                stats.duration("filtration.component.analyze", component.duration);
+                if component.timed_out {
+                    stats.count("filtration.component.timed_out", 1);
+                }
+            }
             for (index, &disabled) in report.disabled.iter().enumerate() {
                 if disabled {
                     base_enabled[index] = false;
