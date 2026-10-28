@@ -6,7 +6,10 @@ use petgraph::{
     visit::{IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, NodeFiltered},
 };
 
-use super::super::{CycleBlocking, Graph, VertexId, View, assignment_cost, reachable};
+use super::super::cycles;
+use super::super::{
+    CycleBlocking, Graph, PreemptiveCyclesConfig, VertexId, View, assignment_cost, reachable,
+};
 use crate::dag::{Error, check_deadline, remaining};
 
 pub(crate) enum Check {
@@ -303,12 +306,39 @@ impl<'a> SmtCore<'a> {
         blocked
     }
 
-    pub(crate) fn block_4cycles(&mut self) -> usize {
-        let cycles = self.g.detect_cycles_4(&self.domain);
-        for cycle in &cycles {
-            let cycle = self.ctx.and_many(cycle.iter().map(|&var| self.vars[var]));
-            self.ctx.assert(self.ctx.not(cycle)).unwrap();
-        }
-        cycles.len()
+    /// Assert one clause per class cycle up to the configured length. Each
+    /// clause rules out all node cycles with that class sequence. A missing
+    /// length uses the auto ceiling; missing caps use the reachable cycle rank
+    /// and `10 *` reachable vertices.
+    pub(crate) fn assert_preemptive_cycles(
+        &mut self,
+        config: &PreemptiveCyclesConfig,
+    ) -> cycles::ClassCycleEnumeration {
+        let vertices = self.domain.iter().filter(|&&active| active).count();
+        let (rank, _, cyclic) = self.g.cycle_analysis(&self.domain);
+        let max_length = config.max_length.unwrap_or(cycles::AUTO_MAX_LENGTH);
+        let max_cycles = config
+            .max_cycles
+            .unwrap_or_else(|| usize::try_from(rank).unwrap_or(usize::MAX));
+        let max_literals = config
+            .max_literals
+            .unwrap_or_else(|| vertices.saturating_mul(10));
+        let ctx = &mut self.ctx;
+        let vars = &self.vars;
+        cycles::for_each_class_cycle(
+            self.g,
+            &cyclic,
+            max_length,
+            max_cycles,
+            max_literals,
+            self.deadline,
+            &mut |_classes, members| {
+                let disjuncts: Vec<_> = members
+                    .iter()
+                    .map(|members| ctx.and_many(members.iter().map(|&node| ctx.not(vars[node]))))
+                    .collect();
+                ctx.assert(ctx.or_many(disjuncts)).unwrap();
+            },
+        )
     }
 }

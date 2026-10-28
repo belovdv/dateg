@@ -948,3 +948,161 @@ mod filtration {
         assert_eq!(filtered, full);
     }
 }
+
+type FlatCycle = (Vec<VertexId>, Vec<Vec<VertexId>>);
+
+fn collect_class_cycles(
+    graph: &Graph,
+    max_length: usize,
+    max_cycles: usize,
+    max_literals: usize,
+) -> (Vec<FlatCycle>, super::cycles::ClassCycleEnumeration) {
+    let domain = vec![true; graph.graph.node_count()];
+    let mut found = Vec::new();
+    let report = super::cycles::for_each_class_cycle(
+        graph,
+        &domain,
+        max_length,
+        max_cycles,
+        max_literals,
+        None,
+        &mut |classes, members| {
+            found.push((
+                classes.to_vec(),
+                members.iter().map(|members| members.to_vec()).collect(),
+            ));
+        },
+    );
+    (found, report)
+}
+
+/// Self cycle at `c1`, mutual recursion `c1 <-> c2`, and `c1 -> c2 -> c3 -> c1`.
+fn class_cycle_graph() -> (TestGraph, [VertexId; 8]) {
+    let mut g = TestGraph::default();
+    let c1 = g.add_vertex(false, 0, || None);
+    let c2 = g.add_vertex(false, 0, || None);
+    let c3 = g.add_vertex(false, 0, || None);
+    let n1 = g.add_vertex(true, 1, || None);
+    let n2 = g.add_vertex(true, 1, || None);
+    let n3 = g.add_vertex(true, 1, || None);
+    let n4 = g.add_vertex(true, 1, || None);
+    let n5 = g.add_vertex(true, 1, || None);
+    g.add_edges(c1, [n1, n5]);
+    g.add_edges(n1, [c2]);
+    g.add_edges(c2, [n2, n3]);
+    g.add_edges(n2, [c1]);
+    g.add_edges(n3, [c3]);
+    g.add_edges(c3, [n4]);
+    g.add_edges(n4, [c1]);
+    g.add_edges(n5, [c1]);
+    (g, [c1, c2, c3, n1, n2, n3, n4, n5])
+}
+
+#[test]
+fn class_cycles_are_enumerated_once_by_length() {
+    let (g, [c1, c2, c3, n1, n2, n3, n4, n5]) = class_cycle_graph();
+    let (found, report) = collect_class_cycles(&g, 3, usize::MAX, usize::MAX);
+    assert_eq!(found.len(), 3);
+    assert!(found.contains(&(vec![c1], vec![vec![n5]])));
+    assert!(found.contains(&(vec![c1, c2], vec![vec![n1], vec![n2]])));
+    assert!(found.contains(&(vec![c1, c2, c3], vec![vec![n1], vec![n3], vec![n4]])));
+    assert_eq!(report.cycles, 3);
+    assert_eq!(report.literals, 1 + 2 + 3);
+    assert_eq!(report.ceiling, 3);
+    assert_eq!(report.reached, 3);
+    assert!(!report.truncated);
+
+    let (found, _) = collect_class_cycles(&g, 1, usize::MAX, usize::MAX);
+    assert_eq!(found, vec![(vec![c1], vec![vec![n5]])]);
+
+    let (found, _) = collect_class_cycles(&g, 2, usize::MAX, usize::MAX);
+    assert_eq!(found.len(), 2);
+}
+
+#[test]
+fn class_cycle_caps_stop_before_the_next_clause() {
+    let (g, _) = class_cycle_graph();
+    let (found, report) = collect_class_cycles(&g, 3, 1, usize::MAX);
+    assert_eq!(found.len(), 1);
+    assert!(report.truncated);
+
+    let (found, report) = collect_class_cycles(&g, 3, usize::MAX, 0);
+    assert!(found.is_empty());
+    assert!(report.truncated);
+
+    let (found, report) = collect_class_cycles(&g, 3, usize::MAX, 1);
+    assert_eq!(found.len(), 1);
+    assert!(report.truncated);
+}
+
+/// Every acyclic, closed assignment must satisfy every class-cycle clause.
+#[test]
+fn class_cycle_clauses_hold_on_acyclic_assignments() {
+    let g = graph_with_a_cycle_alternative();
+    let (found, _) = collect_class_cycles(&g, 4, usize::MAX, usize::MAX);
+    assert!(!found.is_empty());
+    let nodes = g.graph.node_count();
+    let closed = |assignment: &[bool]| {
+        g.graph.node_indices().all(|node| {
+            let id = node.index();
+            !assignment[id]
+                || !g.graph[node].is_all
+                || g.roots.contains(&id)
+                || g.graph
+                    .neighbors_directed(node, petgraph::Direction::Incoming)
+                    .any(|pred| assignment[pred.index()])
+        })
+    };
+    for mask in 0..(1u32 << nodes) {
+        let assignment: Vec<bool> = (0..nodes).map(|node| mask & (1 << node) != 0).collect();
+        if !closed(&assignment) || !g.check_constraints(&assignment) {
+            continue;
+        }
+        for (_, members) in &found {
+            assert!(
+                members
+                    .iter()
+                    .any(|set| set.iter().all(|&node| !assignment[node])),
+                "acyclic assignment {assignment:?} violates {members:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn preemptive_cycles_preserve_sat_cost() {
+    let preemptive = |cycles| {
+        solver(Node::Atomic(AtomicAlgorithm::SatDescending(
+            SatDescendingConfig {
+                preemptive_cycles: cycles,
+                ..Default::default()
+            },
+        )))
+    };
+    let mut g = graph_with_a_cycle_alternative();
+    let baseline = g
+        .solve_with(&preemptive(None), None, &mut StatsSink(None))
+        .unwrap()
+        .cost;
+
+    let mut stats = ExtractStats::default();
+    let cost = {
+        let mut sink = StatsSink(Some(&mut stats));
+        g.solve_with(
+            &preemptive(Some(PreemptiveCyclesConfig {
+                max_length: Some(3),
+                max_cycles: None,
+                max_literals: None,
+            })),
+            None,
+            &mut sink,
+        )
+        .unwrap()
+        .cost
+    };
+    assert_eq!(cost, baseline);
+    let StatValue::Count(cycles) = stats.custom["sat.descending.preemptive_cycles"] else {
+        panic!("missing preemptive cycle count");
+    };
+    assert!(cycles >= 1);
+}

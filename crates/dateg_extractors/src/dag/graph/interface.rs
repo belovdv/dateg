@@ -63,10 +63,37 @@ impl BestEffortConfig {
     }
 }
 
+/// Pre-asserted class-cycle clauses (a subset of the exact acyclicity encoding).
+///
+/// A class cycle is a cycle of e-classes in the quotient graph. One clause per
+/// class cycle rules out every constructor combination that realizes it, so a
+/// length bound covers many node cycles at once without enumerating them.
+/// Lengths are visited shortest-first until a budget runs out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreemptiveCyclesConfig {
+    /// Longest class cycle to encode. `None` derives the length from the
+    /// budgets, up to an internal ceiling of 6. `Some(0)` disables the pass.
+    pub max_length: Option<usize>,
+    /// Absolute clause cap. `None` uses the cycle rank of the reachable graph.
+    pub max_cycles: Option<usize>,
+    /// Absolute literal cap. `None` uses `10 *` the reachable vertex count.
+    pub max_literals: Option<usize>,
+}
+
+impl Default for PreemptiveCyclesConfig {
+    fn default() -> Self {
+        Self {
+            max_length: None,
+            max_cycles: None,
+            max_literals: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MaxSatIncSccConfig {
-    /// Preemptively block all 4-cycles before the first solve.
-    pub preemptive_4cycles: bool,
+    /// Class-cycle clauses asserted before the first solve.
+    pub preemptive_cycles: Option<PreemptiveCyclesConfig>,
     /// How cyclic models are refined.
     pub cycle_blocking: CycleBlocking,
 }
@@ -74,7 +101,7 @@ pub struct MaxSatIncSccConfig {
 impl Default for MaxSatIncSccConfig {
     fn default() -> Self {
         Self {
-            preemptive_4cycles: true,
+            preemptive_cycles: Some(PreemptiveCyclesConfig::default()),
             cycle_blocking: CycleBlocking::default(),
         }
     }
@@ -82,8 +109,8 @@ impl Default for MaxSatIncSccConfig {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SatDescendingConfig {
-    /// Preemptively block all 4-cycles before the first solve.
-    pub preemptive_4cycles: bool,
+    /// Class-cycle clauses asserted before the first check.
+    pub preemptive_cycles: Option<PreemptiveCyclesConfig>,
     /// How cyclic models are refined.
     pub cycle_blocking: CycleBlocking,
     /// Fraction of the remaining gap to descend by on each probe.
@@ -93,7 +120,7 @@ pub struct SatDescendingConfig {
 impl Default for SatDescendingConfig {
     fn default() -> Self {
         Self {
-            preemptive_4cycles: true,
+            preemptive_cycles: Some(PreemptiveCyclesConfig::default()),
             cycle_blocking: CycleBlocking::default(),
             descent_fraction: 1.0 / 64.0,
         }

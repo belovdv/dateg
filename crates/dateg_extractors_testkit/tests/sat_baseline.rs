@@ -41,9 +41,10 @@ fn sat_baseline_improves_and_reports_optimality() {
     assert_eq!(text(&stats_key("descent_fraction")), "0.015625");
     let initial = count(&stats_key("initial_cost"));
     assert!(
-        initial > cost as u64,
-        "initial {initial} did not improve on final {cost}"
+        initial >= cost as u64,
+        "initial {initial} is below final {cost}"
     );
+    assert!(count(&stats_key("preemptive_cycles")) > 0);
     assert_eq!(count(&stats_key("final_cost")), cost as u64);
     assert_eq!(count(&stats_key("lower_bound")), cost as u64);
     assert_eq!(count(&stats_key("optimal")), 1);

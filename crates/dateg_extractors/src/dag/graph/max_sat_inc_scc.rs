@@ -1,12 +1,12 @@
 use std::time::Instant;
 
 use super::common::{Check, SmtCore};
-use super::{CycleBlocking, Graph, MaxSatIncSccConfig, VertexId, View};
+use super::{CycleBlocking, Graph, MaxSatIncSccConfig, PreemptiveCyclesConfig, VertexId, View};
 use crate::dag::{Error, StatsSink, check_deadline};
 
 pub(super) struct MaxSatIncSccExtractor<'a> {
     core: SmtCore<'a>,
-    preemptive_4cycles: bool,
+    preemptive: Option<PreemptiveCyclesConfig>,
     cycle_blocking: CycleBlocking,
     soft: Option<Instant>,
 }
@@ -28,7 +28,7 @@ impl<'a> MaxSatIncSccExtractor<'a> {
         let core = SmtCore::new(g, roots, view, deadline)?;
         let mut r = Self {
             core,
-            preemptive_4cycles: config.preemptive_4cycles,
+            preemptive: config.preemptive_cycles.clone(),
             cycle_blocking: config.cycle_blocking,
             soft,
         };
@@ -79,9 +79,17 @@ impl<'a> MaxSatIncSccExtractor<'a> {
     ) -> Result<Vec<bool>, Error> {
         check_deadline(deadline)?;
         let preemptive_started = Instant::now();
-        if self.preemptive_4cycles {
-            let cycles = self.core.block_4cycles();
-            stats.count("maxsat.inc_scc.preemptive_4cycles", cycles as u64);
+        if let Some(config) = &self.preemptive {
+            let report = self.core.assert_preemptive_cycles(config);
+            stats.count("maxsat.inc_scc.preemptive_cycles", report.cycles as u64);
+            stats.count("maxsat.inc_scc.preemptive_literals", report.literals as u64);
+            stats.count("maxsat.inc_scc.preemptive_visited", report.visited as u64);
+            stats.count(
+                "maxsat.inc_scc.preemptive_truncated",
+                u64::from(report.truncated),
+            );
+            stats.count("maxsat.inc_scc.preemptive_length", report.reached as u64);
+            stats.count("maxsat.inc_scc.preemptive_ceiling", report.ceiling as u64);
         }
         stats.duration("maxsat.inc_scc.preemptive", preemptive_started.elapsed());
         stats.text(

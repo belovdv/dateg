@@ -4,7 +4,8 @@ use easy_smt::SExpr;
 
 use super::common::{Check, SmtCore};
 use super::{
-    CycleBlocking, Graph, SatDescendingConfig, VertexId, View, assignment_cost, check_constraints,
+    CycleBlocking, Graph, PreemptiveCyclesConfig, SatDescendingConfig, VertexId, View,
+    assignment_cost, check_constraints,
 };
 use crate::dag::{Error, StatsSink, check_deadline};
 
@@ -25,7 +26,7 @@ pub(super) struct SatDescendingResult {
 pub(super) struct SatDescendingExtractor<'a> {
     core: SmtCore<'a>,
     total_cost: SExpr,
-    preemptive_4cycles: bool,
+    preemptive: Option<PreemptiveCyclesConfig>,
     cycle_blocking: CycleBlocking,
     descent_fraction: f64,
     probe_checks: u64,
@@ -62,7 +63,7 @@ impl<'a> SatDescendingExtractor<'a> {
         Ok(Self {
             core,
             total_cost,
-            preemptive_4cycles: config.preemptive_4cycles,
+            preemptive: config.preemptive_cycles.clone(),
             cycle_blocking: config.cycle_blocking,
             descent_fraction: config.descent_fraction,
             probe_checks: 0,
@@ -123,9 +124,17 @@ impl<'a> SatDescendingExtractor<'a> {
     ) -> Result<SatDescendingResult, Error> {
         check_deadline(deadline)?;
         let preemptive_started = Instant::now();
-        if self.preemptive_4cycles {
-            let cycles = self.core.block_4cycles();
-            stats.count("sat.descending.preemptive_4cycles", cycles as u64);
+        if let Some(config) = &self.preemptive {
+            let report = self.core.assert_preemptive_cycles(config);
+            stats.count("sat.descending.preemptive_cycles", report.cycles as u64);
+            stats.count("sat.descending.preemptive_literals", report.literals as u64);
+            stats.count("sat.descending.preemptive_visited", report.visited as u64);
+            stats.count(
+                "sat.descending.preemptive_truncated",
+                u64::from(report.truncated),
+            );
+            stats.count("sat.descending.preemptive_length", report.reached as u64);
+            stats.count("sat.descending.preemptive_ceiling", report.ceiling as u64);
         }
         stats.duration("sat.descending.preemptive", preemptive_started.elapsed());
 

@@ -17,6 +17,7 @@ mod common;
 mod component_filter;
 mod components;
 mod config;
+mod cycles;
 mod domination;
 mod filtration;
 mod interface;
@@ -33,8 +34,8 @@ pub(crate) use filtration::filter_with_roots;
 use interface::Vertex;
 pub use interface::{
     Assignment, AtomicAlgorithm, BestEffortAlgorithm, BestEffortConfig, Bounds, CycleBlocking,
-    FilterMode, MaxSatIncSccConfig, Node, Outcome, SatDescendingConfig, SolverConfig,
-    TimeoutPolicy,
+    FilterMode, MaxSatIncSccConfig, Node, Outcome, PreemptiveCyclesConfig, SatDescendingConfig,
+    SolverConfig, TimeoutPolicy,
 };
 pub(crate) use interface::{Graph, VertexId, View};
 pub(crate) use pipeline::solve as solve_pipeline;
@@ -252,29 +253,7 @@ pub(crate) fn record_metrics(
     stats.count("graph.scc_sum_squares", scc_sum_squares);
 
     // Cyclomatic number per SCC: independent cycles in the domain.
-    let mut component_of = vec![usize::MAX; graph.graph.node_count()];
-    for (component, scc) in sccs.iter().enumerate() {
-        for &node in scc {
-            component_of[node] = component;
-        }
-    }
-    let mut cycle_rank = 0u64;
-    let mut cycle_rank_max = 0u64;
-    for (component, scc) in sccs.iter().enumerate() {
-        let internal: u64 = scc
-            .iter()
-            .map(|&node| {
-                graph
-                    .graph
-                    .neighbors(NodeIndex::new(node))
-                    .filter(|next| component_of[next.index()] == component)
-                    .count() as u64
-            })
-            .sum();
-        let rank = internal.saturating_sub(scc.len() as u64 - 1);
-        cycle_rank += rank;
-        cycle_rank_max = cycle_rank_max.max(rank);
-    }
+    let (cycle_rank, cycle_rank_max, _) = graph.cycle_analysis(&domain);
     stats.count("graph.cycle_rank", cycle_rank);
     stats.count("graph.cycle_rank_max", cycle_rank_max);
 
@@ -339,6 +318,37 @@ impl Graph {
             .filter(|comp| comp.len() > 1)
             .map(|comp| comp.iter().map(|nx| nx.index()).collect())
             .collect()
+    }
+
+    /// Cyclomatic number of the active subgraph, total and per-SCC maximum,
+    /// plus the mask of nodes in non-trivial SCCs.
+    fn cycle_analysis(&self, active: &[bool]) -> (u64, u64, Vec<bool>) {
+        let sccs = self.detect_components(active);
+        let mut cyclic = vec![false; self.graph.node_count()];
+        let mut component_of = vec![usize::MAX; self.graph.node_count()];
+        for (component, scc) in sccs.iter().enumerate() {
+            for &node in scc {
+                component_of[node] = component;
+                cyclic[node] = true;
+            }
+        }
+        let mut total = 0u64;
+        let mut max = 0u64;
+        for (component, scc) in sccs.iter().enumerate() {
+            let internal: u64 = scc
+                .iter()
+                .map(|&node| {
+                    self.graph
+                        .neighbors(NodeIndex::new(node))
+                        .filter(|next| component_of[next.index()] == component)
+                        .count() as u64
+                })
+                .sum();
+            let rank = internal.saturating_sub(scc.len() as u64 - 1);
+            total += rank;
+            max = max.max(rank);
+        }
+        (total, max, cyclic)
     }
 
     /// Shortest directed cycle in one strongly connected component.

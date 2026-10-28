@@ -13,7 +13,11 @@
 //! - `PROBE_TIMEOUT` extraction seconds (default 10)
 //! - `PROBE_ALGORITHM` solver name (default `maxsat.inc_scc`)
 //! - `PROBE_CYCLE_BLOCKING` (`scc` | `shortest`) for either solver
-//! - `PROBE_PREEMPTIVE` (`1` | `0`) for preemptive 4-cycle blocking
+//! - `PROBE_PREEMPTIVE` (`1` | `0`) toggles class-cycle preemption; `1` uses
+//!   the auto length and relative budgets
+//! - `PROBE_PREEMPTIVE_L` fixed longest class cycle (`0` disables, unset = auto)
+//! - `PROBE_PREEMPTIVE_MAX_CYCLES`, `PROBE_PREEMPTIVE_MAX_LITERALS` absolute caps
+//!   (`0` = unbounded, unset = relative default)
 //! - `PROBE_METRICS_ONLY` when set, stop right after graph construction
 //!
 //! Output is a single `key=value` line prefixed with `RESULT `.
@@ -23,7 +27,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use dateg_extractors::dag::{AtomicAlgorithm, CycleBlocking, Error, ExtractStats, Node, StatValue};
+use dateg_extractors::dag::{
+    AtomicAlgorithm, CycleBlocking, Error, ExtractStats, Node, PreemptiveCyclesConfig, StatValue,
+};
 use dateg_extractors_testkit::algorithms;
 use dateg_extractors_testkit::indexes::mem::{CostModel, extract_mem_with_stats, set_cost_model};
 use dateg_extractors_testkit::sources::generated::{self, Params};
@@ -107,17 +113,13 @@ fn main() {
     });
     match &mut algorithm.config.pipeline {
         Node::Atomic(AtomicAlgorithm::SatDescending(config)) => {
-            if let Ok(value) = std::env::var("PROBE_PREEMPTIVE") {
-                config.preemptive_4cycles = parse_bool(&value);
-            }
+            apply_preemptive(&mut config.preemptive_cycles);
             if let Ok(value) = std::env::var("PROBE_CYCLE_BLOCKING") {
                 config.cycle_blocking = parse_cycle_blocking(&value);
             }
         }
         Node::Atomic(AtomicAlgorithm::MaxSat(config)) => {
-            if let Ok(value) = std::env::var("PROBE_PREEMPTIVE") {
-                config.preemptive_4cycles = parse_bool(&value);
-            }
+            apply_preemptive(&mut config.preemptive_cycles);
             if let Ok(value) = std::env::var("PROBE_CYCLE_BLOCKING") {
                 config.cycle_blocking = parse_cycle_blocking(&value);
             }
@@ -183,5 +185,37 @@ fn parse_cycle_blocking(value: &str) -> CycleBlocking {
         "scc" => CycleBlocking::Scc,
         "shortest" => CycleBlocking::Shortest,
         other => panic!("unknown PROBE_CYCLE_BLOCKING {other:?}"),
+    }
+}
+
+/// `PROBE_PREEMPTIVE` toggles the pass; the L/MAX_* variables override the
+/// configured values and imply the pass is on. Cap `0` means unbounded.
+fn apply_preemptive(cycles: &mut Option<PreemptiveCyclesConfig>) {
+    if let Ok(value) = std::env::var("PROBE_PREEMPTIVE") {
+        *cycles = parse_bool(&value).then(PreemptiveCyclesConfig::default);
+    }
+    let mut config = cycles.clone().unwrap_or_default();
+    let mut touched = false;
+    if let Ok(value) = std::env::var("PROBE_PREEMPTIVE_L") {
+        let length: usize = value.parse().expect("PROBE_PREEMPTIVE_L");
+        if length == 0 {
+            *cycles = None;
+            return;
+        }
+        config.max_length = Some(length);
+        touched = true;
+    }
+    if let Ok(value) = std::env::var("PROBE_PREEMPTIVE_MAX_CYCLES") {
+        let cap: usize = value.parse().expect("PROBE_PREEMPTIVE_MAX_CYCLES");
+        config.max_cycles = Some(if cap == 0 { usize::MAX } else { cap });
+        touched = true;
+    }
+    if let Ok(value) = std::env::var("PROBE_PREEMPTIVE_MAX_LITERALS") {
+        let cap: usize = value.parse().expect("PROBE_PREEMPTIVE_MAX_LITERALS");
+        config.max_literals = Some(if cap == 0 { usize::MAX } else { cap });
+        touched = true;
+    }
+    if touched {
+        *cycles = Some(config);
     }
 }
