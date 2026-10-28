@@ -92,6 +92,9 @@ struct Context<'a, 's> {
     stage: &'static str,
     last_error: Option<Error>,
     stop: bool,
+    /// A reduction that is not existence-preserving has run; a later
+    /// `Infeasible` must not be returned as a proof.
+    lossy: bool,
 }
 
 pub(crate) fn solve(
@@ -115,6 +118,7 @@ pub(crate) fn solve(
         stage: "pipeline",
         last_error: None,
         stop: false,
+        lossy: false,
     };
 
     let run = Run::new(deadline, soft_deadline);
@@ -139,6 +143,7 @@ pub(crate) fn solve(
         });
     }
     match status {
+        Status::Infeasible if context.lossy => Err(Error::NotFound),
         Status::Infeasible => Ok(Outcome::Infeasible),
         Status::Failed(error) => Err(error),
         Status::Empty => Err(context.last_error.unwrap_or(Error::NotFound)),
@@ -297,8 +302,11 @@ impl Context<'_, '_> {
         match node {
             Node::Atomic(algorithm) => self.solve_leaf(algorithm, run),
             Node::Filter(mode) => {
-                self.apply_filter(*mode, run.deadline());
-                Status::Empty
+                if self.apply_filter(*mode, run.deadline()) {
+                    Status::Infeasible
+                } else {
+                    Status::Empty
+                }
             }
             Node::Timeout { policy, child } => {
                 let child_run = run.child(*policy);
@@ -394,7 +402,10 @@ impl Context<'_, '_> {
             }
             match self.eval(node, run) {
                 Status::Solution => solution = true,
-                Status::Infeasible => infeasible = true,
+                Status::Infeasible => {
+                    infeasible = true;
+                    break;
+                }
                 Status::Empty => {}
                 Status::Failed(error) => failed = Some(error),
             }
@@ -419,7 +430,7 @@ impl Context<'_, '_> {
             + self.view.extra_groups.len()
     }
 
-    fn apply_filter(&mut self, mode: FilterMode, deadline: Option<Instant>) {
+    fn apply_filter(&mut self, mode: FilterMode, deadline: Option<Instant>) -> bool {
         let report = filter_with_roots(self.graph, mode, &self.view.enabled, self.roots, deadline);
         let disabled = report.disabled.iter().filter(|&&disabled| disabled).count() as u64;
         for (index, &disabled) in report.disabled.iter().enumerate() {
@@ -434,8 +445,81 @@ impl Context<'_, '_> {
                 FilterMode::AtLeastOneOptimal => "optimal",
                 FilterMode::AtLeastOneSolution => "validity",
                 FilterMode::ComponentOptimal => "component",
+                FilterMode::DeadVertices => "dead",
+                FilterMode::ComponentBottomUp => "component_bottom_up",
+                FilterMode::ComponentBottomUpFrontier(_) => "component_bottom_up_frontier",
             },
         );
+        if let Some(dead) = &report.dead {
+            self.stats
+                .count("filter.dead.unreachable", dead.removed_unreachable as u64);
+            self.stats
+                .count("filter.dead.unproducible", dead.removed_unproducible as u64);
+            self.stats
+                .count("filter.dead.root_dead", u64::from(dead.root_dead));
+            self.stats
+                .count("filter.dead.timed_out", u64::from(dead.timed_out));
+            self.stats.duration("filter.dead.duration", dead.duration);
+        }
+        if let Some(bottom_up) = &report.bottom_up {
+            self.stats
+                .count("filter.bottom_up.components", bottom_up.components as u64);
+            self.stats
+                .count("filter.bottom_up.vertices", bottom_up.vertices as u64);
+            self.stats
+                .count("filter.bottom_up.needed", bottom_up.needed as u64);
+            self.stats.count(
+                "filter.bottom_up.recovered_values",
+                bottom_up.recovered_values as u64,
+            );
+            self.stats.count(
+                "filter.bottom_up.recovered_constructors",
+                bottom_up.recovered_constructors as u64,
+            );
+            self.stats.count(
+                "filter.bottom_up.collapsed_components",
+                bottom_up.collapsed_components as u64,
+            );
+            self.stats
+                .count("filter.bottom_up.missing", bottom_up.missing as u64);
+            self.stats
+                .count("filter.bottom_up.disabled", bottom_up.disabled_total as u64);
+            self.stats
+                .duration("filter.bottom_up.duration", bottom_up.duration);
+        }
+        if report.lossy {
+            self.lossy = true;
+            self.stats.count("filter.lossy", 1);
+        }
+        if let Some(frontier) = &report.frontier {
+            self.stats
+                .count("filter.frontier.components", frontier.components as u64);
+            self.stats
+                .count("filter.frontier.vertices", frontier.vertices as u64);
+            self.stats
+                .count("filter.frontier.processed", frontier.processed as u64);
+            self.stats
+                .count("filter.frontier.skipped_wide", frontier.skipped_wide as u64);
+            self.stats.count(
+                "filter.frontier.skipped_missing",
+                frontier.skipped_missing as u64,
+            );
+            self.stats
+                .count("filter.frontier.timed_out", u64::from(frontier.timed_out));
+            self.stats
+                .count("filter.frontier.supports", frontier.supports as u64);
+            self.stats
+                .count("filter.frontier.max_supports", frontier.max_frontier as u64);
+            self.stats
+                .count("filter.frontier.routes", frontier.routes as u64);
+            self.stats
+                .count("filter.frontier.disabled", frontier.disabled_total as u64);
+            self.stats
+                .duration("filter.frontier.duration", frontier.duration);
+        }
+        if report.infeasible {
+            self.stats.count("filter.infeasible", 1);
+        }
         if let Some(component) = &report.component {
             self.stats
                 .count("component_filter.components", component.components as u64);
@@ -462,5 +546,6 @@ impl Context<'_, '_> {
             }
         }
         self.view.refresh(self.graph);
+        report.infeasible
     }
 }

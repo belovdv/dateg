@@ -226,6 +226,7 @@ impl<Index: Default> Extractor<Index> {
             .get(&root.into_egglog())
             .ok_or(Error::RootMissing)?;
         let mut base_enabled = vec![true; self.dag.node_count()];
+        let mut lossy = false;
 
         if let Some(mode) = options.filtration {
             let started = Instant::now();
@@ -239,6 +240,9 @@ impl<Index: Default> Extractor<Index> {
                     FilterMode::AtLeastOneSolution => "validity",
                     FilterMode::AtLeastOneOptimal => "optimal",
                     FilterMode::ComponentOptimal => "component",
+                    FilterMode::DeadVertices => "dead",
+                    FilterMode::ComponentBottomUp => "component_bottom_up",
+                    FilterMode::ComponentBottomUpFrontier(_) => "component_bottom_up_frontier",
                 },
             );
             stats.count("filtration.alternatives", report.alternatives);
@@ -247,6 +251,78 @@ impl<Index: Default> Extractor<Index> {
             stats.count("filtration.removed_duplicate", report.removed_duplicate);
             stats.count("filtration.removed_dominated", report.removed_dominated);
             stats.count("filtration.disabled", disabled);
+            if let Some(dead) = &report.dead {
+                stats.count(
+                    "filtration.dead.unreachable",
+                    dead.removed_unreachable as u64,
+                );
+                stats.count(
+                    "filtration.dead.unproducible",
+                    dead.removed_unproducible as u64,
+                );
+                stats.count("filtration.dead.root_dead", u64::from(dead.root_dead));
+                stats.count("filtration.dead.timed_out", u64::from(dead.timed_out));
+                stats.duration("filtration.dead.duration", dead.duration);
+            }
+            if let Some(bottom_up) = &report.bottom_up {
+                stats.count(
+                    "filtration.bottom_up.components",
+                    bottom_up.components as u64,
+                );
+                stats.count("filtration.bottom_up.vertices", bottom_up.vertices as u64);
+                stats.count("filtration.bottom_up.needed", bottom_up.needed as u64);
+                stats.count(
+                    "filtration.bottom_up.recovered_values",
+                    bottom_up.recovered_values as u64,
+                );
+                stats.count(
+                    "filtration.bottom_up.recovered_constructors",
+                    bottom_up.recovered_constructors as u64,
+                );
+                stats.count(
+                    "filtration.bottom_up.collapsed_components",
+                    bottom_up.collapsed_components as u64,
+                );
+                stats.count("filtration.bottom_up.missing", bottom_up.missing as u64);
+                stats.count(
+                    "filtration.bottom_up.disabled",
+                    bottom_up.disabled_total as u64,
+                );
+                stats.duration("filtration.bottom_up.duration", bottom_up.duration);
+            }
+            if report.lossy {
+                lossy = true;
+                stats.count("filtration.lossy", 1);
+            }
+            if let Some(frontier) = &report.frontier {
+                stats.count("filtration.frontier.components", frontier.components as u64);
+                stats.count("filtration.frontier.vertices", frontier.vertices as u64);
+                stats.count("filtration.frontier.processed", frontier.processed as u64);
+                stats.count(
+                    "filtration.frontier.skipped_wide",
+                    frontier.skipped_wide as u64,
+                );
+                stats.count(
+                    "filtration.frontier.skipped_missing",
+                    frontier.skipped_missing as u64,
+                );
+                stats.count(
+                    "filtration.frontier.timed_out",
+                    u64::from(frontier.timed_out),
+                );
+                stats.count("filtration.frontier.supports", frontier.supports as u64);
+                stats.count(
+                    "filtration.frontier.max_supports",
+                    frontier.max_frontier as u64,
+                );
+                stats.count("filtration.frontier.routes", frontier.routes as u64);
+                stats.count(
+                    "filtration.frontier.disabled",
+                    frontier.disabled_total as u64,
+                );
+                stats.duration("filtration.frontier.duration", frontier.duration);
+            }
+            stats.count("filtration.infeasible", u64::from(report.infeasible));
             if let Some(component) = &report.component {
                 stats.count("filtration.component.removed_a", component.removed_a as u64);
                 stats.count("filtration.component.removed_b", component.removed_b as u64);
@@ -265,9 +341,12 @@ impl<Index: Default> Extractor<Index> {
                     base_enabled[index] = false;
                 }
             }
+            if report.infeasible {
+                return Err(Error::Infeasible);
+            }
         }
 
-        let outcome = graph::solve_pipeline(
+        let outcome = match graph::solve_pipeline(
             &self.dag,
             &[root_vertex],
             base_enabled.clone(),
@@ -275,7 +354,12 @@ impl<Index: Default> Extractor<Index> {
             deadline,
             soft_deadline,
             stats,
-        )?;
+        ) {
+            Ok(Outcome::Infeasible) if lossy => return Err(Error::NotFound),
+            Ok(outcome) => outcome,
+            Err(Error::Infeasible) if lossy => return Err(Error::NotFound),
+            Err(error) => return Err(error),
+        };
         let assignment = match &outcome {
             Outcome::Optimal(assignment) => assignment.clone(),
             Outcome::Any { assignment, .. } => assignment.clone(),

@@ -5,22 +5,25 @@
 //! a model of the full graph: an assignment on the reduced view is valid on the
 //! full graph as long as disabled vertices are unselected.
 //!
-//! Rules (all local, no fixed points):
-//! - self-referential alternative: a constructor whose own output class is one
-//!   of its inputs can never be selected in an acyclic solution;
-//! - equal input sets: pure alternatives that need exactly the same classes are
-//!   interchangeable;
-//! - strict subset: a pure alternative whose inputs are a strict subset of
-//!   another's is always at least as feasible.
+//! Modes:
+//! - structural: self-referential alternatives, equal input sets, strict subset;
+//! - `DeadVertices`: root-reachability plus structural-producibility cleanup;
+//! - `ComponentOptimal`: dead cleanup, structural rules, top-down component
+//!   filter;
+//! - `ComponentBottomUp`: dead cleanup plus one recovered route per pure
+//!   component. This mode is lossy; its report sets `lossy`.
 //!
-//! Consumers are never removed by the last two rules, so the consumption
-//! assignment space is preserved for later phases.
+//! Consumers are never removed by the structural subset rules, so the
+//! consumption assignment space is preserved for later phases.
 
 use std::time::Instant;
 
 use petgraph::{Direction::Outgoing, graph::NodeIndex};
 
-use super::{FilterMode, Graph, VertexId, domination};
+use super::{
+    FilterMode, Graph, VertexId, bottom_up, component_filter, dead_vertices, domination,
+    support_frontier,
+};
 
 #[derive(Debug)]
 pub(crate) struct FilterReport {
@@ -30,7 +33,43 @@ pub(crate) struct FilterReport {
     pub(crate) removed_dominated: u64,
     pub(crate) alternatives: u64,
     pub(crate) consumers: u64,
-    pub(crate) component: Option<super::component_filter::Report>,
+    pub(crate) component: Option<component_filter::Report>,
+    pub(crate) dead: Option<dead_vertices::Report>,
+    pub(crate) bottom_up: Option<bottom_up::Report>,
+    pub(crate) frontier: Option<support_frontier::Report>,
+    /// The reduction may have removed the only realizable route through opaque
+    /// inputs; a later `Infeasible` is not a global proof.
+    pub(crate) lossy: bool,
+    /// A dead root proves that no valid assignment exists.
+    pub(crate) infeasible: bool,
+}
+
+impl FilterReport {
+    fn new(graph: &Graph) -> Self {
+        Self {
+            disabled: vec![false; graph.graph.node_count()],
+            removed_self: 0,
+            removed_duplicate: 0,
+            removed_dominated: 0,
+            alternatives: 0,
+            consumers: 0,
+            component: None,
+            dead: None,
+            bottom_up: None,
+            frontier: None,
+            lossy: false,
+            infeasible: false,
+        }
+    }
+}
+
+fn merge(enabled: &mut [bool], disabled: &mut [bool], removed: &[bool]) {
+    for (index, &removed) in removed.iter().enumerate() {
+        if removed {
+            enabled[index] = false;
+            disabled[index] = true;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -51,28 +90,105 @@ pub(crate) fn filter_with_roots(
     roots: &[VertexId],
     deadline: Option<Instant>,
 ) -> FilterReport {
-    if mode == FilterMode::ComponentOptimal {
-        let mut enabled = enabled.to_vec();
-        let mut report = structural_filter(graph, FilterMode::AtLeastOneOptimal, &enabled);
-        for (index, &disabled) in report.disabled.iter().enumerate() {
-            if disabled {
-                enabled[index] = false;
-            }
+    match mode {
+        FilterMode::ComponentOptimal => component_optimal(graph, enabled, roots, deadline),
+        FilterMode::DeadVertices => dead_only(graph, enabled, roots, deadline),
+        FilterMode::ComponentBottomUp => component_bottom_up(graph, enabled, roots),
+        FilterMode::ComponentBottomUpFrontier(max_supports) => {
+            component_frontier(graph, enabled, roots, max_supports, deadline)
         }
-        let filtered =
-            super::component_filter::filter(graph, roots, &enabled, deadline, Default::default());
-        for (index, &disabled) in filtered.disabled.iter().enumerate() {
-            report.disabled[index] |= disabled;
+        FilterMode::AtLeastOneOptimal | FilterMode::AtLeastOneSolution => {
+            structural_filter(graph, mode, enabled)
         }
-        report.component = Some(filtered);
+    }
+}
+
+fn dead_only(
+    graph: &Graph,
+    enabled: &[bool],
+    roots: &[VertexId],
+    deadline: Option<Instant>,
+) -> FilterReport {
+    let dead = dead_vertices::filter(graph, roots, enabled, deadline);
+    let mut report = FilterReport::new(graph);
+    let mut enabled = enabled.to_vec();
+    merge(&mut enabled, &mut report.disabled, &dead.disabled);
+    report.infeasible = dead.root_dead;
+    report.dead = Some(dead);
+    report
+}
+
+fn component_optimal(
+    graph: &Graph,
+    enabled: &[bool],
+    roots: &[VertexId],
+    deadline: Option<Instant>,
+) -> FilterReport {
+    let dead = dead_vertices::filter(graph, roots, enabled, deadline);
+    let mut report = FilterReport::new(graph);
+    let mut enabled = enabled.to_vec();
+    merge(&mut enabled, &mut report.disabled, &dead.disabled);
+    report.infeasible = dead.root_dead;
+    report.dead = Some(dead);
+    if report.infeasible {
         return report;
     }
-    structural_filter(graph, mode, enabled)
+
+    let structural = structural_filter(graph, FilterMode::AtLeastOneOptimal, &enabled);
+    merge(&mut enabled, &mut report.disabled, &structural.disabled);
+    report.removed_self = structural.removed_self;
+    report.removed_duplicate = structural.removed_duplicate;
+    report.removed_dominated = structural.removed_dominated;
+    report.alternatives = structural.alternatives;
+    report.consumers = structural.consumers;
+
+    let filtered = component_filter::filter(graph, roots, &enabled, deadline, Default::default());
+    merge(&mut enabled, &mut report.disabled, &filtered.disabled);
+    report.component = Some(filtered);
+    report
+}
+
+fn component_bottom_up(graph: &Graph, enabled: &[bool], roots: &[VertexId]) -> FilterReport {
+    // The pass is a last resort: it ignores the pipeline deadline because it is
+    // O(V+E) and must still run after the exact stages exhausted the budget.
+    let dead = dead_vertices::filter(graph, roots, enabled, None);
+    let mut report = FilterReport::new(graph);
+    let mut enabled = enabled.to_vec();
+    merge(&mut enabled, &mut report.disabled, &dead.disabled);
+    report.infeasible = dead.root_dead;
+    if !dead.root_dead {
+        let filtered = bottom_up::filter(graph, roots, &enabled, 1);
+        merge(&mut enabled, &mut report.disabled, &filtered.disabled);
+        report.lossy = filtered.disabled_total > 0;
+        report.bottom_up = Some(filtered);
+    }
+    report.dead = Some(dead);
+    report
+}
+
+fn component_frontier(
+    graph: &Graph,
+    enabled: &[bool],
+    roots: &[VertexId],
+    max_supports: usize,
+    deadline: Option<Instant>,
+) -> FilterReport {
+    let dead = dead_vertices::filter(graph, roots, enabled, deadline);
+    let mut report = FilterReport::new(graph);
+    let mut enabled = enabled.to_vec();
+    merge(&mut enabled, &mut report.disabled, &dead.disabled);
+    report.infeasible = dead.root_dead;
+    if !dead.root_dead {
+        let filtered = support_frontier::filter(graph, roots, &enabled, max_supports, deadline);
+        merge(&mut enabled, &mut report.disabled, &filtered.disabled);
+        report.frontier = Some(filtered);
+    }
+    report.dead = Some(dead);
+    report
 }
 
 fn structural_filter(graph: &Graph, mode: FilterMode, enabled: &[bool]) -> FilterReport {
-    let count = graph.graph.node_count();
-    let mut disabled = vec![false; count];
+    let mut report = FilterReport::new(graph);
     let mut removed_self = 0;
     let mut removed_duplicate = 0;
     let mut removed_dominated = 0;
@@ -96,7 +212,7 @@ fn structural_filter(graph: &Graph, mode: FilterMode, enabled: &[bool]) -> Filte
             .is_ok()
             && enabled[constructor]
         {
-            disabled[constructor] = true;
+            report.disabled[constructor] = true;
             removed_self += 1;
         }
     }
@@ -111,7 +227,7 @@ fn structural_filter(graph: &Graph, mode: FilterMode, enabled: &[bool]) -> Filte
             .map(|next| next.index())
             .filter(|&candidate| {
                 enabled[candidate]
-                    && !disabled[candidate]
+                    && !report.disabled[candidate]
                     && !domination::is_consumer(graph, candidate)
             })
             .collect();
@@ -137,7 +253,7 @@ fn structural_filter(graph: &Graph, mode: FilterMode, enabled: &[bool]) -> Filte
                 continue;
             }
             let duplicate = kept.iter().any(|(other_inputs, _)| other_inputs == &inputs);
-            disabled[candidate] = true;
+            report.disabled[candidate] = true;
             if duplicate {
                 removed_duplicate += 1;
             } else {
@@ -146,13 +262,10 @@ fn structural_filter(graph: &Graph, mode: FilterMode, enabled: &[bool]) -> Filte
         }
     }
 
-    FilterReport {
-        disabled,
-        removed_self,
-        removed_duplicate,
-        removed_dominated,
-        alternatives,
-        consumers,
-        component: None,
-    }
+    report.removed_self = removed_self;
+    report.removed_duplicate = removed_duplicate;
+    report.removed_dominated = removed_dominated;
+    report.alternatives = alternatives;
+    report.consumers = consumers;
+    report
 }

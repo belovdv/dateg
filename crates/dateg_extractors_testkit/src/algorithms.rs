@@ -146,6 +146,14 @@ pub static ALGORITHMS: LazyLock<Vec<Algorithm>> = LazyLock::new(|| {
             bench_only: false,
         },
         Algorithm {
+            name: "maxsat.dead",
+            config: maxsat(),
+            filtration: Some(FilterMode::DeadVertices),
+            capacity: maxsat_capacity,
+            oracles: &["naive"],
+            bench_only: false,
+        },
+        Algorithm {
             name: "sat.descending",
             config: sat(),
             filtration: None,
@@ -157,6 +165,38 @@ pub static ALGORITHMS: LazyLock<Vec<Algorithm>> = LazyLock::new(|| {
             name: "sat.descending.filtered",
             config: sat(),
             filtration: Some(FilterMode::AtLeastOneSolution),
+            capacity: sat_capacity,
+            oracles: &[],
+            bench_only: true,
+        },
+        Algorithm {
+            name: "sat.descending.dead",
+            config: sat(),
+            filtration: Some(FilterMode::DeadVertices),
+            capacity: sat_capacity,
+            oracles: &[],
+            bench_only: true,
+        },
+        Algorithm {
+            name: "sat.descending.bottom_up",
+            config: sat(),
+            filtration: Some(FilterMode::ComponentBottomUp),
+            capacity: sat_capacity,
+            oracles: &[],
+            bench_only: true,
+        },
+        Algorithm {
+            name: "sat.descending.frontier",
+            config: sat(),
+            filtration: Some(FilterMode::ComponentBottomUpFrontier(16)),
+            capacity: sat_capacity,
+            oracles: &[],
+            bench_only: true,
+        },
+        Algorithm {
+            name: "sat.descending.frontier64",
+            config: sat(),
+            filtration: Some(FilterMode::ComponentBottomUpFrontier(64)),
             capacity: sat_capacity,
             oracles: &[],
             bench_only: true,
@@ -249,7 +289,7 @@ mod tests {
     #[test]
     fn filters_algorithm_names() {
         assert_eq!(matching("maxsat.inc_scc").len(), 1);
-        assert_eq!(matching("sat.*").len(), 2);
+        assert_eq!(matching("sat.*").len(), 6);
         assert!(matching("sat.*").iter().all(|a| a.name.starts_with("sat.")));
         assert_eq!(matching("combinator*").len(), 2);
         assert_eq!(matching("chain").len(), 1);

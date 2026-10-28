@@ -13,11 +13,13 @@ use petgraph::{
 use super::StatsSink;
 
 mod best_effort;
+mod bottom_up;
 mod common;
 mod component_filter;
 mod components;
 mod config;
 mod cycles;
+mod dead_vertices;
 mod domination;
 mod filtration;
 mod interface;
@@ -25,6 +27,7 @@ mod max_sat_inc_scc;
 mod naive;
 mod pipeline;
 mod sat_descending;
+mod support_frontier;
 #[cfg(test)]
 mod tests;
 

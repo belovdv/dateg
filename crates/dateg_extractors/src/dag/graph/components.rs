@@ -12,7 +12,8 @@
 //! Vertices without a finite acyclic derivation are reported as unfounded.
 //!
 //! The decomposition is the reusable entry point shared by the top-down
-//! component filter and future bottom-up filtering.
+//! component filter and the bottom-up filter (`decompose` returns the light
+//! parts; `analyze` adds the required-input fixpoint).
 
 #![allow(dead_code)] // component data is shared with future filters
 
@@ -330,7 +331,21 @@ fn region_required_inputs(
     (required_inputs, violations)
 }
 
-fn build_region(graph: &Graph, vertices: Vec<VertexId>) -> Component {
+/// Component decomposition without the required-input fixpoint. Used by
+/// reductions that only need the `V`/`I`/`U` sets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ComponentParts {
+    /// Sorted vertex set `V`.
+    pub(crate) vertices: Vec<VertexId>,
+    /// Sorted `I`.
+    pub(crate) inputs: Vec<VertexId>,
+    /// Inputs that also have a pure producer inside `V`.
+    pub(crate) shared_inputs: Vec<VertexId>,
+    /// Sorted `U`.
+    pub(crate) outputs: Vec<VertexId>,
+}
+
+fn component_parts(graph: &Graph, vertices: Vec<VertexId>) -> ComponentParts {
     let count = graph.graph.node_count();
     let mut inside = vec![false; count];
     for &vertex in &vertices {
@@ -354,6 +369,33 @@ fn build_region(graph: &Graph, vertices: Vec<VertexId>) -> Component {
         })
         .filter(|&vertex| is_value(graph, vertex))
         .collect();
+    ComponentParts {
+        vertices,
+        inputs,
+        shared_inputs,
+        outputs,
+    }
+}
+
+pub(crate) fn decompose(graph: &Graph) -> Vec<ComponentParts> {
+    pure_components(graph)
+        .into_iter()
+        .map(|vertices| component_parts(graph, vertices))
+        .collect()
+}
+
+fn build_region(graph: &Graph, parts: ComponentParts) -> Component {
+    let count = graph.graph.node_count();
+    let mut inside = vec![false; count];
+    for &vertex in &parts.vertices {
+        inside[vertex] = true;
+    }
+    let ComponentParts {
+        vertices,
+        inputs,
+        shared_inputs,
+        outputs,
+    } = parts;
 
     let mut violations = Vec::new();
     for &vertex in &vertices {
@@ -384,9 +426,9 @@ fn build_region(graph: &Graph, vertices: Vec<VertexId>) -> Component {
 }
 
 pub(crate) fn analyze(graph: &Graph) -> Vec<Component> {
-    pure_components(graph)
+    decompose(graph)
         .into_iter()
-        .map(|vertices| build_region(graph, vertices))
+        .map(|parts| build_region(graph, parts))
         .collect()
 }
 

@@ -139,6 +139,21 @@ pub enum FilterMode {
     /// rule is restricted to components without opaque inputs; components with
     /// `I != {}` get the cheaper alternative and cascade rules.
     ComponentOptimal,
+    /// Keep only the root-reachable, structurally producible domain. Preserves
+    /// at least one optimum and proves infeasibility for a dead root.
+    DeadVertices,
+    /// Collapse each pure component to one bottom-up derivation per boundary
+    /// output. Acyclic and single-route, but validity-only: it loses both
+    /// optimality and, through opaque inputs, possibly solvability.
+    ComponentBottomUp,
+    /// As `ComponentBottomUp`, but keeps one acyclic derivation per minimal
+    /// opaque-input support (`Is`) per output. This preserves every derivable
+    /// input support, so it is validity-preserving, not just best-effort.
+    /// The argument caps the number of minimal supports per value; a component
+    /// that exceeds any cap is left untouched. Cycles may remain in the kept
+    /// union and are handled by the solver's acyclicity encoding. The pass
+    /// respects the caller deadline and stops after 500 ms when there is none.
+    ComponentBottomUpFrontier(usize),
     // The full four-level contract also has:
     // - `AllOptimal`: preserve every optimal solution.
     // - `BestEffort`: no guarantee.
