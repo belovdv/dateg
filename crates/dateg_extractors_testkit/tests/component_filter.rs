@@ -24,7 +24,7 @@ fn with_timeout(name: &str, seconds: u64) -> Algorithm {
     let mut algorithm = algorithms::by_name(name)
         .unwrap_or_else(|| panic!("missing algorithm {name}"))
         .clone();
-    algorithm.config.timeout = Some(Duration::from_secs(seconds));
+    algorithm.config.timeout = Duration::from_secs(seconds);
     algorithm
 }
 

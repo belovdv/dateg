@@ -36,7 +36,7 @@ pub fn cases() -> Vec<Case> {
         case!("failure/timeout", "timed out", |algorithm| {
             let (m, root) = inc_chain(3);
             let mut config = algorithm.config.clone();
-            config.timeout = Some(Duration::ZERO);
+            config.timeout = Duration::ZERO;
             let options = ExtractOptions::builder(config).build();
             ExprIndex::extract(&m, root, (m.one, m.inc, m.mul), &options, None)
                 .map(|extraction| extraction.cost)

@@ -207,7 +207,7 @@ fn run_algorithm(
 
         for timeout in args.timeouts.iter().copied() {
             let mut run = algorithm.clone();
-            run.config.timeout = Some(Duration::from_secs(timeout));
+            run.config.timeout = Duration::from_secs(timeout);
             let mut stats = ExtractStats::default();
             let started = Instant::now();
             let outcome = catch_unwind(AssertUnwindSafe(|| {

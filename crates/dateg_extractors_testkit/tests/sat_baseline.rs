@@ -21,7 +21,7 @@ fn sat_baseline_improves_and_reports_optimality() {
     });
 
     let mut algorithm = algorithms::by_name("sat.descending").unwrap().clone();
-    algorithm.config.timeout = Some(Duration::from_secs(10));
+    algorithm.config.timeout = Duration::from_secs(10);
 
     let mut stats = ExtractStats::default();
     let cost = extract_mem_with_stats(&green, root, &algorithm, Some(&mut stats)).unwrap();

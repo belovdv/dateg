@@ -106,11 +106,11 @@ fn main() {
     )
     .expect("algorithm")
     .clone();
-    algorithm.config.timeout = Some(if metrics_only {
+    algorithm.config.timeout = if metrics_only {
         Duration::ZERO
     } else {
         Duration::from_secs(timeout_secs)
-    });
+    };
     match &mut algorithm.config.pipeline {
         Node::Atomic(AtomicAlgorithm::SatDescending(config)) => {
             apply_preemptive(&mut config.preemptive_cycles);

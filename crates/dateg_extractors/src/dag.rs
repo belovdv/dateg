@@ -163,8 +163,11 @@ impl<Index: Default> Extractor<Index> {
         stats: Option<&mut ExtractStats>,
     ) -> Result<Extraction<Index>, Error> {
         let started = Instant::now();
-        let deadline = options.solver.timeout.map(|timeout| started + timeout);
-        let soft_deadline = options.solver.soft_timeout.map(|timeout| started + timeout);
+        let deadline = started.checked_add(options.solver.timeout);
+        let soft_deadline = options
+            .solver
+            .soft_timeout
+            .and_then(|timeout| started.checked_add(timeout));
         let mut stats = StatsSink(stats);
         if let Some(stats) = stats.0.as_deref_mut() {
             *stats = ExtractStats::default();

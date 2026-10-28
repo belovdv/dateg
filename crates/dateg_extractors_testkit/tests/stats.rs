@@ -25,7 +25,7 @@ fn store_consumes_memory_and_forks_are_counted() {
     let mut algorithm = algorithms::by_name("maxsat.inc_scc")
         .expect("maxsat")
         .clone();
-    algorithm.config.timeout = Some(Duration::from_secs(5));
+    algorithm.config.timeout = Duration::from_secs(5);
 
     let mut stats = ExtractStats::default();
     let _ = extract_mem_with_stats(&m, root, &algorithm, Some(&mut stats));

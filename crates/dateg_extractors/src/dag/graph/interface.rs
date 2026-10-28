@@ -186,7 +186,14 @@ pub enum AtomicAlgorithm {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Node {
     Atomic(AtomicAlgorithm),
-    Filter(FilterMode),
+    /// Apply a reduction, then run the child unless the reduction proved
+    /// infeasibility. `budget` bounds the reduction only; `None` uses the
+    /// parent budget.
+    Filter {
+        mode: FilterMode,
+        budget: Option<TimeoutPolicy>,
+        child: Box<Node>,
+    },
     /// Run the child with a child budget.
     Timeout {
         policy: TimeoutPolicy,
@@ -214,12 +221,19 @@ pub enum Node {
     },
 }
 
+impl From<AtomicAlgorithm> for Node {
+    fn from(algorithm: AtomicAlgorithm) -> Self {
+        Self::Atomic(algorithm)
+    }
+}
+
 /// The single solver configuration.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SolverConfig {
     pub pipeline: Node,
-    /// Hard wall-clock budget; `None` disables it.
-    pub timeout: Option<Duration>,
+    /// Hard wall-clock budget. Always finite; use a very large value for an
+    /// effectively unbounded run.
+    pub timeout: Duration,
     /// Stop once a solution exists and this budget is reached; `None` disables.
     pub soft_timeout: Option<Duration>,
     /// Optional display/stat name for the whole pipeline.

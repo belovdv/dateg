@@ -19,12 +19,7 @@ struct Solution {
 }
 
 fn solver(pipeline: Node) -> SolverConfig {
-    SolverConfig {
-        pipeline,
-        timeout: None,
-        soft_timeout: None,
-        name: None,
-    }
+    SolverConfig::new(pipeline)
 }
 
 fn maxsat() -> SolverConfig {
@@ -657,15 +652,10 @@ fn pipeline_bundle_filter_and_atomic() {
     g.set_roots([root]);
     g.add_edges(root, [expensive, cheap]);
 
-    let pipeline = SolverConfig {
-        pipeline: Node::Bundle(vec![
-            Node::Filter(FilterMode::AtLeastOneOptimal),
-            Node::Atomic(AtomicAlgorithm::MaxSat(Default::default())),
-        ]),
-        timeout: None,
-        soft_timeout: None,
-        name: None,
-    };
+    let pipeline = SolverConfig::new(
+        Node::from(AtomicAlgorithm::MaxSat(Default::default()))
+            .with_prefilter(FilterMode::AtLeastOneOptimal),
+    );
     let enabled = vec![true; g.node_count()];
     let outcome = super::pipeline::solve(
         &g,

@@ -301,11 +301,19 @@ impl Context<'_, '_> {
         }
         match node {
             Node::Atomic(algorithm) => self.solve_leaf(algorithm, run),
-            Node::Filter(mode) => {
-                if self.apply_filter(*mode, run.deadline()) {
+            Node::Filter {
+                mode,
+                budget,
+                child,
+            } => {
+                let deadline = match budget {
+                    Some(policy) => run.child(*policy).deadline(),
+                    None => run.deadline(),
+                };
+                if self.apply_filter(*mode, deadline) {
                     Status::Infeasible
                 } else {
-                    Status::Empty
+                    self.eval(child, run)
                 }
             }
             Node::Timeout { policy, child } => {

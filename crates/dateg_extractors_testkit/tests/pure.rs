@@ -33,14 +33,14 @@ fn variable_leaves_are_free() {
     let mut algorithm = algorithms::by_name("maxsat.inc_scc")
         .expect("maxsat")
         .clone();
-    algorithm.config.timeout = Some(Duration::from_secs(1));
+    algorithm.config.timeout = Duration::from_secs(1);
     assert_eq!(extract_int(&m, var, &algorithm).expect("var"), 0);
 }
 
 #[test]
 fn chain_handles_pure_programs_across_shapes() {
     let mut chain = algorithms::by_name("chain").expect("chain").clone();
-    chain.config.timeout = Some(Duration::from_secs(5));
+    chain.config.timeout = Duration::from_secs(5);
 
     for (seed, vars) in [(1, 1), (2, 4), (3, 16)] {
         let (m, root, _) = pure::build(pure_params(seed, 20, vars));
@@ -61,22 +61,15 @@ fn chain_handles_pure_programs_across_shapes() {
 #[test]
 fn soft_timeout_stops_after_a_solution() {
     let (m, root, _) = pure::build(pure_params(1, 20, 4));
-    let mut config = SolverConfig::new(Node::Bundle(vec![
-        Node::Label {
-            name: "first",
-            child: Box::new(Node::Atomic(AtomicAlgorithm::Chain(
-                BestEffortConfig::default(),
-            ))),
-        },
-        Node::Label {
-            name: "second",
-            child: Box::new(Node::Atomic(AtomicAlgorithm::SatDescending(
-                SatDescendingConfig::default(),
-            ))),
-        },
-    ]));
-    config.timeout = Some(Duration::from_secs(5));
-    config.soft_timeout = Some(Duration::ZERO);
+    let config = SolverConfig::new(Node::bundle([
+        Node::from(AtomicAlgorithm::Chain(BestEffortConfig::default())).with_label("first"),
+        Node::from(AtomicAlgorithm::SatDescending(
+            SatDescendingConfig::default(),
+        ))
+        .with_label("second"),
+    ]))
+    .with_timeout(Duration::from_secs(5))
+    .with_soft_timeout(Duration::ZERO);
 
     let mut algorithm = algorithms::by_name("combinator.thorough")
         .expect("combinator.thorough")
@@ -98,36 +91,18 @@ fn combinator_returns_a_fallback_solution() {
     // the combinator must rely on the best-effort baseline (or a second-stage
     // solution seeded from it) instead of failing.
     let (m, root, _) = pure::build(pure_params(38, 160, 4));
-    let first = Node::Label {
-        name: "first",
-        child: Box::new(Node::Timeout {
-            policy: TimeoutPolicy::Time(Duration::from_millis(20)),
-            child: Box::new(Node::Atomic(AtomicAlgorithm::MaxSat(Default::default()))),
-        }),
-    };
-    let baseline = Node::Label {
-        name: "baseline",
-        child: Box::new(Node::Atomic(AtomicAlgorithm::Chain(
-            BestEffortConfig::default(),
-        ))),
-    };
-    let second = Node::Label {
-        name: "second",
-        child: Box::new(Node::Timeout {
-            policy: TimeoutPolicy::Time(Duration::from_millis(20)),
-            child: Box::new(Node::Atomic(AtomicAlgorithm::SatDescending(
-                SatDescendingConfig::default(),
-            ))),
-        }),
-    };
-    let mut config = SolverConfig::new(Node::Bundle(vec![
-        Node::OnFailure {
-            primary: Box::new(first),
-            fallback: Box::new(baseline),
-        },
-        second,
-    ]));
-    config.timeout = Some(Duration::from_secs(2));
+    let first = Node::from(AtomicAlgorithm::MaxSat(Default::default()))
+        .with_timeout(TimeoutPolicy::Time(Duration::from_millis(20)))
+        .with_label("first");
+    let baseline =
+        Node::from(AtomicAlgorithm::Chain(BestEffortConfig::default())).with_label("baseline");
+    let second = Node::from(AtomicAlgorithm::SatDescending(
+        SatDescendingConfig::default(),
+    ))
+    .with_timeout(TimeoutPolicy::Time(Duration::from_millis(20)))
+    .with_label("second");
+    let config = SolverConfig::new(Node::bundle([first.with_fallback(baseline), second]))
+        .with_timeout(Duration::from_secs(2));
 
     let mut algorithm = algorithms::by_name("combinator.thorough")
         .expect("combinator.thorough")

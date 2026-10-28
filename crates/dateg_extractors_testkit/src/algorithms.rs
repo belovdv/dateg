@@ -50,15 +50,13 @@ impl Algorithm {
             Tier::Slow => Duration::from_secs(60),
             Tier::Soak => Duration::from_secs(600),
         };
-        if let Some(timeout) = algorithm.config.timeout {
-            algorithm.config.timeout = Some(timeout.max(floor));
-        }
+        algorithm.config.timeout = algorithm.config.timeout.max(floor);
         algorithm
     }
 }
 
 fn atomic(algorithm: AtomicAlgorithm) -> SolverConfig {
-    SolverConfig::new(Node::Atomic(algorithm))
+    SolverConfig::new(algorithm)
 }
 
 fn maxsat() -> SolverConfig {
@@ -75,28 +73,18 @@ fn chain() -> SolverConfig {
     atomic(AtomicAlgorithm::Chain(BestEffortConfig::default()))
 }
 
-fn component_filter() -> Node {
-    Node::Timeout {
-        policy: TimeoutPolicy::FractionCapped {
-            fraction: 0.5,
-            cap: Duration::from_secs(5),
-        },
-        child: Box::new(Node::Filter(FilterMode::ComponentOptimal)),
-    }
-}
-
 fn maxsat_component() -> SolverConfig {
-    SolverConfig::new(Node::Bundle(vec![
-        Node::Label {
-            name: "first",
-            child: Box::new(Node::Atomic(AtomicAlgorithm::Chain(
-                BestEffortConfig::default(),
-            ))),
-        },
-        component_filter(),
-        Node::Label {
-            name: "second",
-            child: Box::new(Node::Atomic(AtomicAlgorithm::MaxSat(Default::default()))),
+    SolverConfig::new(Node::bundle([
+        Node::from(AtomicAlgorithm::Chain(BestEffortConfig::default())).with_label("first"),
+        Node::Filter {
+            mode: FilterMode::ComponentOptimal,
+            budget: Some(TimeoutPolicy::FractionCapped {
+                fraction: 0.5,
+                cap: Duration::from_secs(5),
+            }),
+            child: Box::new(
+                Node::from(AtomicAlgorithm::MaxSat(Default::default())).with_label("second"),
+            ),
         },
     ]))
 }

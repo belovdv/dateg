@@ -16,7 +16,7 @@ use dateg_extractors_testkit::sources::pure;
 
 fn algorithm(name: &str) -> algorithms::Algorithm {
     let mut algorithm = algorithms::by_name(name).unwrap().clone();
-    algorithm.config.timeout = Some(Duration::from_secs(10));
+    algorithm.config.timeout = Duration::from_secs(10);
     algorithm
 }
 

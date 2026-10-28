@@ -26,7 +26,7 @@ fn try_steps(params: Params, timeout: Duration) -> Outcome {
     let mut algorithm = algorithms::by_name("maxsat.inc_scc")
         .expect("maxsat algorithm")
         .clone();
-    algorithm.config.timeout = Some(timeout);
+    algorithm.config.timeout = timeout;
     let started = Instant::now();
     match extract_mem(&m, root, &algorithm) {
         Ok(cost) => Outcome::Solved {
