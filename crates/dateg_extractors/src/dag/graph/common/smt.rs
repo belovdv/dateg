@@ -52,12 +52,20 @@ impl<'a> SmtCore<'a> {
     ) -> Result<Self, Error> {
         check_deadline(deadline)?;
         let mut builder = easy_smt::ContextBuilder::new();
+        let mut args = vec!["-smt2".to_string(), "-in".to_string(), "-v:0".to_string()];
+        // A per-process cap, so a runaway query degrades to the cheaper
+        // fallback instead of taking the whole run down. `0` disables it.
+        let memory_mb = std::env::var("Z3_MEMORY_MB")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(512);
+        args.push(format!("-memory:{memory_mb}"));
         if let Ok(z3_path) = std::env::var("Z3_PATH") {
-            builder.solver(&z3_path);
-            builder.solver_args(["-smt2", "-in", "-v:0"]);
+            builder.solver(z3_path);
         } else {
-            builder.with_z3_defaults();
+            builder.solver("z3");
         }
+        builder.solver_args(args);
         if std::env::var("SMT_DEBUG").is_ok() {
             builder.replay_file(Some(std::io::stderr()));
         }
@@ -223,10 +231,19 @@ impl<'a> SmtCore<'a> {
         Ok(())
     }
 
-    /// Solver errors after the deadline are timeouts; z3 reports a canceled
-    /// check as `(error "line ... canceled")` rather than `unknown`.
+    /// z3 reports a canceled check after the deadline as
+    /// `(error "line ... canceled")` rather than `unknown`, so errors past the
+    /// deadline become timeouts. A memory-cap hit is reported as
+    /// `(error "out of memory")` and maps to `OutOfMemory` regardless of the
+    /// deadline, so the pipeline can fall back like it does on a timeout.
     fn solver_error(&self, error: std::io::Error) -> Error {
-        if self
+        let exhausted = error
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("out of memory");
+        if exhausted {
+            Error::OutOfMemory
+        } else if self
             .deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
         {

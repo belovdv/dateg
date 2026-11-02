@@ -286,6 +286,7 @@ impl Context<'_, '_> {
             Err(error) => {
                 self.last_error = Some(match &error {
                     Error::Timeout => Error::Timeout,
+                    Error::OutOfMemory => Error::OutOfMemory,
                     Error::NotFound => Error::NotFound,
                     _ => Error::Custom(error.to_string()),
                 });

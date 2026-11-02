@@ -101,7 +101,7 @@ impl<'a> SatDescendingExtractor<'a> {
                     }
                     self.probe_blocked_sets += blocked.len() as u64;
                 }
-                Err(Error::Timeout) => return Ok(Probe::TimedOut),
+                Err(Error::Timeout | Error::OutOfMemory) => return Ok(Probe::TimedOut),
                 Err(error) => return Err(error),
             }
         }

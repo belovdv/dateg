@@ -6,6 +6,8 @@ pub enum Error {
     RootMissing,
     /// The configured wall-clock budget was exhausted.
     Timeout,
+    /// A solver process hit its configured memory cap.
+    OutOfMemory,
     /// No solution was found, but infeasibility was not proved.
     NotFound,
     /// The solver proved that no valid acyclic assignment exists.
@@ -22,6 +24,7 @@ impl std::fmt::Display for Error {
             Self::RootNotCanonical => write!(f, "please canonicalize root token"),
             Self::RootMissing => write!(f, "root value is not present in the extracted tables"),
             Self::Timeout => write!(f, "solver timed out"),
+            Self::OutOfMemory => write!(f, "solver ran out of memory"),
             Self::NotFound => write!(f, "solver found no solution"),
             Self::Infeasible => write!(f, "solver proved no solution exists"),
             Self::InvalidSolution => write!(f, "solver produced an invalid assignment"),

@@ -81,6 +81,14 @@ impl EGraph {
     pub fn _inner_mut(&mut self) -> &mut egglog_bridge::EGraph {
         &mut self.inner
     }
+
+    /// Rows across every declared table, for diagnostics.
+    pub fn total_rows(&self) -> usize {
+        self.tables
+            .values()
+            .map(|(_, function)| self.inner.table_size(*function))
+            .sum()
+    }
 }
 
 fn single_thread_pool() -> Arc<rayon::ThreadPool> {
