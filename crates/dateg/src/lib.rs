@@ -21,6 +21,7 @@ pub use utils::*;
 
 pub use egglog_bridge::{FunctionId, RuleId};
 pub use egglog_core_relations::{BaseValue, ContainerValue, Value, ValueRebuilder};
+pub use egglog_reports::{IterationReport, ReportLevel};
 
 pub use dateg_macro::rule;
 

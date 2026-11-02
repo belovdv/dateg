@@ -231,10 +231,12 @@ name = "dateg"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "anyhow",
  "dateg_macro",
  "egglog-bridge",
  "egglog-core-relations",
  "egglog-numeric-id",
+ "egglog-reports",
  "indexmap",
  "paste",
  "rayon",

@@ -8,7 +8,9 @@ dateg_macro.path = "../dateg_macro"
 egglog-bridge = { git = "https://github.com/egraphs-good/egglog.git", rev = "8879605cafad303db25787406163a7e5bc845f5d" }
 egglog-core-relations = { git = "https://github.com/egraphs-good/egglog.git", rev = "8879605cafad303db25787406163a7e5bc845f5d" }
 egglog-numeric-id = { git = "https://github.com/egraphs-good/egglog.git", rev = "8879605cafad303db25787406163a7e5bc845f5d" }
+egglog-reports = { git = "https://github.com/egraphs-good/egglog.git", rev = "8879605cafad303db25787406163a7e5bc845f5d" }
 indexmap.workspace = true
+anyhow.workspace = true
 ahash.workspace = true
 paste.workspace = true
 rayon.workspace = true

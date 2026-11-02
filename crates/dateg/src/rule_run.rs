@@ -12,9 +12,17 @@ impl EGraph {
     }
 
     pub fn run_rules(&mut self, rules: &[RuleId]) -> bool {
+        self.run_rules_report(rules)
+            .map(|report| report.changed())
+            .unwrap()
+    }
+
+    /// Same as [`EGraph::run_rules`], but returns the report with per-rule
+    /// match counts and timings.
+    pub fn run_rules_report(&mut self, rules: &[RuleId]) -> anyhow::Result<IterationReport> {
         let pool = self.thread_pool.clone();
         let inner = &mut self.inner;
-        let mut run = || inner.run_rules(rules, None).unwrap().changed();
+        let mut run = || inner.run_rules(rules, None);
         match pool {
             Some(pool) => pool.install(run),
             None => run(),
