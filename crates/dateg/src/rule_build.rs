@@ -7,8 +7,15 @@ use crate::*;
 
 impl EGraph {
     pub fn rule_builder(&mut self, name: Option<&str>) -> RuleBuilder<'_> {
+        let name = match name {
+            Some(name) => name.to_string(),
+            None => {
+                self.rule_count += 1;
+                format!("rule_{}", self.rule_count)
+            }
+        };
         RuleBuilder {
-            inner: self.inner.new_rule(name.unwrap_or(""), true),
+            inner: self.inner.new_rule(&name, true),
             vars: vec![],
             grounded: Default::default(),
         }

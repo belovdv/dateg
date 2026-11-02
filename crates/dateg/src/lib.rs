@@ -31,6 +31,7 @@ pub struct EGraph {
     pub ruleset_active: String,
     pub rulesets: AHashMap<String, Vec<RuleId>>,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
+    rule_count: usize,
 }
 
 impl EGraph {
