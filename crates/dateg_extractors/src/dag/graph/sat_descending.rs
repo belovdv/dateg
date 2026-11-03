@@ -57,9 +57,9 @@ impl<'a> SatDescendingExtractor<'a> {
             .filter(|assignment| check_constraints(g, roots, view, assignment))
             .map(|assignment| (assignment_cost(g, view, &assignment), assignment));
         let mut core = SmtCore::new(g, roots, view, deadline)?;
-        core.assert_root_closure();
-        core.assert_conflict_groups();
-        let total_cost = core.assert_total_cost();
+        core.assert_root_closure()?;
+        core.assert_conflict_groups()?;
+        let total_cost = core.assert_total_cost()?;
         Ok(Self {
             core,
             total_cost,
@@ -74,28 +74,34 @@ impl<'a> SatDescendingExtractor<'a> {
     }
 
     /// Add an assumption literal that implies `total_cost <= bound`.
-    fn assume_bound(&mut self, bound: usize) -> SExpr {
-        let assumption = self.core.new_var("_bound", self.core.ctx.bool_sort());
+    fn assume_bound(&mut self, bound: usize) -> Result<SExpr, Error> {
+        let assumption = self.core.new_var("_bound", self.core.ctx.bool_sort())?;
         let bound = self
             .core
             .ctx
             .lte(self.total_cost, self.core.ctx.numeral(bound));
-        self.core
-            .ctx
-            .assert(self.core.ctx.imp(assumption, bound))
-            .unwrap();
-        assumption
+        let assertion = self.core.ctx.imp(assumption, bound);
+        self.core.ctx.assert(assertion)?;
+        Ok(assumption)
     }
 
     /// Check one cost bound, refining cycles until the model is acyclic.
     fn probe(&mut self, bound: usize) -> Result<Probe, Error> {
-        let assumption = self.assume_bound(bound);
+        let assumption = match self.assume_bound(bound) {
+            Ok(assumption) => assumption,
+            Err(Error::Timeout | Error::OutOfMemory) => return Ok(Probe::TimedOut),
+            Err(error) => return Err(error),
+        };
         loop {
             self.probe_checks += 1;
             match self.core.check(Some(assumption.clone())) {
                 Ok(Check::Unsat) => return Ok(Probe::Infeasible),
                 Ok(Check::Sat(selected)) => {
-                    let blocked = self.core.block_cycles(&selected, self.cycle_blocking);
+                    let blocked = match self.core.block_cycles(&selected, self.cycle_blocking) {
+                        Ok(blocked) => blocked,
+                        Err(Error::Timeout | Error::OutOfMemory) => return Ok(Probe::TimedOut),
+                        Err(error) => return Err(error),
+                    };
                     if blocked.is_empty() {
                         return Ok(Probe::Feasible(selected));
                     }
@@ -125,7 +131,7 @@ impl<'a> SatDescendingExtractor<'a> {
         check_deadline(deadline)?;
         let preemptive_started = Instant::now();
         if let Some(config) = &self.preemptive {
-            let report = self.core.assert_preemptive_cycles(config);
+            let report = self.core.assert_preemptive_cycles(config)?;
             stats.count("sat.descending.preemptive_cycles", report.cycles as u64);
             stats.count("sat.descending.preemptive_literals", report.literals as u64);
             stats.count("sat.descending.preemptive_visited", report.visited as u64);
@@ -156,7 +162,10 @@ impl<'a> SatDescendingExtractor<'a> {
             match self.core.check(None) {
                 Ok(Check::Unsat) => break 'first Err(Error::Infeasible),
                 Ok(Check::Sat(selected)) => {
-                    let blocked = self.core.block_cycles(&selected, self.cycle_blocking);
+                    let blocked = match self.core.block_cycles(&selected, self.cycle_blocking) {
+                        Ok(blocked) => blocked,
+                        Err(error) => break 'first Err(error),
+                    };
                     if blocked.is_empty() {
                         let cost = self.core.cost(&selected);
                         break 'first Ok((cost, selected));

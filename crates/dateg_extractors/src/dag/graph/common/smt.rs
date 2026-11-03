@@ -17,6 +17,37 @@ pub(crate) enum Check {
     Unsat,
 }
 
+// Solver failures are `io::Error`s carrying z3's `(error "...")` reply, so
+// classify them once here instead of at every call site.
+//
+// Not ideal: the impl is crate-wide, so any non-solver `io::Error` in the
+// extractor would also become a solver error (`Custom`). That is acceptable
+// while the SMT context is the only I/O source, and it keeps the encoding
+// code free of `map_err` noise.
+//
+// `canceled` is z3's timeout/resource-exhaustion word, not only user
+// cancellation: see `common_msgs::g_canceled_msg` (`src/util/common_msgs.cpp`),
+// `CANCELED -> "canceled"` in `src/smt/smt_context_pp.cpp`, and the note in
+// `src/opt/optsmt.cpp` that it is used for resource exhaustion. The SMT2
+// frontend prints it as `(error "line N column M: canceled")`
+// (`src/parsers/smt2/smt2parser.cpp`). z3 itself matches both spellings
+// (`src/solver/parallel_tactical.cpp`), hence both are accepted here.
+impl From<std::io::Error> for Error {
+    fn from(error: std::io::Error) -> Self {
+        let message = error.to_string().to_ascii_lowercase();
+        if message.contains("out of memory") {
+            Self::OutOfMemory
+        } else if message.contains("canceled")
+            || message.contains("cancelled")
+            || message.contains("timeout")
+        {
+            Self::Timeout
+        } else {
+            Self::Custom(error.to_string())
+        }
+    }
+}
+
 impl CycleBlocking {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -69,9 +100,7 @@ impl<'a> SmtCore<'a> {
         if std::env::var("SMT_DEBUG").is_ok() {
             builder.replay_file(Some(std::io::stderr()));
         }
-        let ctx = builder
-            .build()
-            .map_err(|error| Error::Custom(error.to_string()))?;
+        let ctx = builder.build()?;
 
         let domain = reachable(g, roots, view);
         let mut r = Self {
@@ -88,11 +117,11 @@ impl<'a> SmtCore<'a> {
             .graph
             .node_weights()
             .map(|n| r.new_bool(&n.label))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         assert!(!roots.is_empty());
         for &root in roots {
-            r.ctx.assert(r.vars[root]).unwrap();
+            r.ctx.assert(r.vars[root])?;
         }
 
         let filtered = NodeFiltered::from_fn(&g.graph, |node| r.domain[node.index()]);
@@ -111,9 +140,7 @@ impl<'a> SmtCore<'a> {
             } else {
                 continue;
             };
-            r.ctx
-                .assert(r.ctx.imp(r.vars[node.index()], requirement))
-                .unwrap();
+            r.ctx.assert(r.ctx.imp(r.vars[node.index()], requirement))?;
         }
         Ok(r)
     }
@@ -121,7 +148,7 @@ impl<'a> SmtCore<'a> {
     /// A selected non-root needs a selected predecessor. This removes
     /// disconnected model choices and makes the selected cost match the
     /// extracted index.
-    pub(crate) fn assert_root_closure(&mut self) {
+    pub(crate) fn assert_root_closure(&mut self) -> Result<(), Error> {
         let g = self.g;
         let filtered = NodeFiltered::from_fn(&g.graph, |node| self.domain[node.index()]);
         for node in filtered.node_identifiers() {
@@ -138,12 +165,12 @@ impl<'a> SmtCore<'a> {
                     .or_many(predecessors.into_iter().map(|pred| self.vars[pred.index()]))
             };
             self.ctx
-                .assert(self.ctx.imp(self.vars[node.index()], requirement))
-                .unwrap();
+                .assert(self.ctx.imp(self.vars[node.index()], requirement))?;
         }
+        Ok(())
     }
 
-    pub(crate) fn assert_total_cost(&mut self) -> SExpr {
+    pub(crate) fn assert_total_cost(&mut self) -> Result<SExpr, Error> {
         let terms: Vec<_> = self
             .g
             .graph
@@ -165,9 +192,9 @@ impl<'a> SmtCore<'a> {
         } else {
             self.ctx.plus_many(terms)
         };
-        let total = self.new_var("_total_cost", self.ctx.int_sort());
-        self.ctx.assert(self.ctx.eq(total, cost)).unwrap();
-        total
+        let total = self.new_var("_total_cost", self.ctx.int_sort())?;
+        self.ctx.assert(self.ctx.eq(total, cost))?;
+        Ok(total)
     }
 
     pub(crate) fn cost(&self, assignment: &[bool]) -> usize {
@@ -178,7 +205,7 @@ impl<'a> SmtCore<'a> {
     /// group does not become quadratic. Out-of-domain members are skipped:
     /// their variables are free in this encoding and must not constrain the
     /// chain.
-    pub(crate) fn assert_conflict_groups(&mut self) {
+    pub(crate) fn assert_conflict_groups(&mut self) -> Result<(), Error> {
         for group in self.view.all_groups(self.g) {
             let members: Vec<_> = group
                 .iter()
@@ -191,18 +218,17 @@ impl<'a> SmtCore<'a> {
             let mut prefix_any = self.vars[first];
             for &var in &members[1..] {
                 self.ctx
-                    .assert(self.ctx.not(self.ctx.and(self.vars[var], prefix_any)))
-                    .unwrap();
-                let next = self.new_var("_cg", self.ctx.bool_sort());
+                    .assert(self.ctx.not(self.ctx.and(self.vars[var], prefix_any)))?;
+                let next = self.new_var("_cg", self.ctx.bool_sort())?;
                 self.ctx
-                    .assert(self.ctx.eq(next, self.ctx.or(prefix_any, self.vars[var])))
-                    .unwrap();
+                    .assert(self.ctx.eq(next, self.ctx.or(prefix_any, self.vars[var])))?;
                 prefix_any = next;
             }
         }
+        Ok(())
     }
 
-    pub(crate) fn new_bool(&mut self, label: &Option<String>) -> SExpr {
+    pub(crate) fn new_bool(&mut self, label: &Option<String>) -> Result<SExpr, Error> {
         let hint = match label {
             Some(s) => format!("_{}", s.replace("(", "_").replace(")", "_")),
             None => "".to_string(),
@@ -210,10 +236,10 @@ impl<'a> SmtCore<'a> {
         self.new_var(&hint, self.ctx.bool_sort())
     }
 
-    pub(crate) fn new_var(&mut self, hint: &str, sort: SExpr) -> SExpr {
+    pub(crate) fn new_var(&mut self, hint: &str, sort: SExpr) -> Result<SExpr, Error> {
         self.counter += 1;
         let name = format!("v{}{hint}", self.counter);
-        self.ctx.declare_const(name, sort).unwrap()
+        Ok(self.ctx.declare_const(name, sort)?)
     }
 
     /// z3's timeout is per check, so refresh it from the actual remaining
@@ -224,32 +250,19 @@ impl<'a> SmtCore<'a> {
             let millis = u64::try_from(timeout.as_millis())
                 .unwrap_or(u64::MAX)
                 .max(1);
-            self.ctx
-                .set_option(":timeout", self.ctx.numeral(millis))
-                .map_err(|error| Error::Custom(error.to_string()))?;
+            self.ctx.set_option(":timeout", self.ctx.numeral(millis))?;
         }
         Ok(())
     }
 
-    /// z3 reports a canceled check after the deadline as
-    /// `(error "line ... canceled")` rather than `unknown`, so errors past the
-    /// deadline become timeouts. A memory-cap hit is reported as
-    /// `(error "out of memory")` and maps to `OutOfMemory` regardless of the
-    /// deadline, so the pipeline can fall back like it does on a timeout.
-    fn solver_error(&self, error: std::io::Error) -> Error {
-        let exhausted = error
-            .to_string()
-            .to_ascii_lowercase()
-            .contains("out of memory");
-        if exhausted {
-            Error::OutOfMemory
-        } else if self
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
-            Error::Timeout
-        } else {
-            Error::Custom(error.to_string())
+    /// z3 reports a canceled check as `(error "line ... canceled")`, which the
+    /// `From` impl maps to `Timeout`. Errors that do not say so are still
+    /// timeouts once the deadline has passed, so promote them here rather than
+    /// at every solver call.
+    fn check_error(&self, error: std::io::Error) -> Error {
+        match (Error::from(error), self.deadline) {
+            (Error::Custom(_), Some(deadline)) if Instant::now() >= deadline => Error::Timeout,
+            (error, _) => error,
         }
     }
 
@@ -261,7 +274,7 @@ impl<'a> SmtCore<'a> {
             Some(assumption) => self.ctx.check_assuming([assumption]),
             None => self.ctx.check(),
         }
-        .map_err(|error| self.solver_error(error))?;
+        .map_err(|error| self.check_error(error))?;
 
         match response {
             easy_smt::Response::Sat => {}
@@ -279,7 +292,7 @@ impl<'a> SmtCore<'a> {
         let values = self
             .ctx
             .get_value(self.vars.clone())
-            .map_err(|error| self.solver_error(error))?;
+            .map_err(|error| self.check_error(error))?;
         let selected = values
             .into_iter()
             .enumerate()
@@ -296,11 +309,12 @@ impl<'a> SmtCore<'a> {
         Ok(Check::Sat(selected))
     }
 
-    pub(crate) fn assert_cycles(&mut self, cycles: &[Vec<VertexId>]) {
+    pub(crate) fn assert_cycles(&mut self, cycles: &[Vec<VertexId>]) -> Result<(), Error> {
         for cycle in cycles {
             let cycle = self.ctx.and_many(cycle.iter().map(|&var| self.vars[var]));
-            self.ctx.assert(self.ctx.not(cycle)).unwrap();
+            self.ctx.assert(self.ctx.not(cycle))?;
         }
+        Ok(())
     }
 
     /// Block cyclic components in `selected` and return the blocked sets.
@@ -310,7 +324,7 @@ impl<'a> SmtCore<'a> {
         &mut self,
         selected: &[bool],
         blocking: CycleBlocking,
-    ) -> Vec<Vec<VertexId>> {
+    ) -> Result<Vec<Vec<VertexId>>, Error> {
         let components = self.g.detect_components(selected);
         let blocked = match blocking {
             CycleBlocking::Scc => components,
@@ -319,8 +333,8 @@ impl<'a> SmtCore<'a> {
                 .filter_map(|component| self.g.shortest_cycle(selected, component))
                 .collect(),
         };
-        self.assert_cycles(&blocked);
-        blocked
+        self.assert_cycles(&blocked)?;
+        Ok(blocked)
     }
 
     /// Assert one clause per class cycle up to the configured length. Each
@@ -330,7 +344,7 @@ impl<'a> SmtCore<'a> {
     pub(crate) fn assert_preemptive_cycles(
         &mut self,
         config: &PreemptiveCyclesConfig,
-    ) -> cycles::ClassCycleEnumeration {
+    ) -> Result<cycles::ClassCycleEnumeration, Error> {
         let vertices = self.domain.iter().filter(|&&active| active).count();
         let (rank, _, cyclic) = self.g.cycle_analysis(&self.domain);
         let max_length = config.max_length.unwrap_or(cycles::AUTO_MAX_LENGTH);
@@ -340,22 +354,28 @@ impl<'a> SmtCore<'a> {
         let max_literals = config
             .max_literals
             .unwrap_or_else(|| vertices.saturating_mul(10));
+        let deadline = self.deadline;
         let ctx = &mut self.ctx;
         let vars = &self.vars;
-        cycles::for_each_class_cycle(
+        let mut clauses = Vec::new();
+        let report = cycles::for_each_class_cycle(
             self.g,
             &cyclic,
             max_length,
             max_cycles,
             max_literals,
-            self.deadline,
+            deadline,
             &mut |_classes, members| {
                 let disjuncts: Vec<_> = members
                     .iter()
                     .map(|members| ctx.and_many(members.iter().map(|&node| ctx.not(vars[node]))))
                     .collect();
-                ctx.assert(ctx.or_many(disjuncts)).unwrap();
+                clauses.push(ctx.or_many(disjuncts));
             },
-        )
+        );
+        for clause in clauses {
+            ctx.assert(clause)?;
+        }
+        Ok(report)
     }
 }

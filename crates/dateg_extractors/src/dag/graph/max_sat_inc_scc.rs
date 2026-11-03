@@ -47,10 +47,10 @@ impl<'a> MaxSatIncSccExtractor<'a> {
                 r.core.ctx.atom(":weight"),
                 r.core.ctx.numeral(cost),
             ]);
-            r.core.ctx.raw_send(assert_soft).unwrap();
-            r.core.ctx.raw_recv().unwrap();
+            r.core.ctx.raw_send(assert_soft)?;
+            r.core.ctx.raw_recv()?;
         }
-        r.core.assert_conflict_groups();
+        r.core.assert_conflict_groups()?;
 
         Ok(r)
     }
@@ -60,7 +60,7 @@ impl<'a> MaxSatIncSccExtractor<'a> {
         match self.core.check(None)? {
             Check::Unsat => Err(Error::Infeasible),
             Check::Sat(selected) => {
-                let blocked = self.core.block_cycles(&selected, self.cycle_blocking);
+                let blocked = self.core.block_cycles(&selected, self.cycle_blocking)?;
                 if blocked.is_empty() {
                     Ok(Step::Solved(selected))
                 } else {
@@ -80,7 +80,7 @@ impl<'a> MaxSatIncSccExtractor<'a> {
         check_deadline(deadline)?;
         let preemptive_started = Instant::now();
         if let Some(config) = &self.preemptive {
-            let report = self.core.assert_preemptive_cycles(config);
+            let report = self.core.assert_preemptive_cycles(config)?;
             stats.count("maxsat.inc_scc.preemptive_cycles", report.cycles as u64);
             stats.count("maxsat.inc_scc.preemptive_literals", report.literals as u64);
             stats.count("maxsat.inc_scc.preemptive_visited", report.visited as u64);
